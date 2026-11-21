@@ -51,8 +51,55 @@ export function bboxOf(line: LngLat[], padDeg = 0.002): [number, number, number,
   return [minLng - padDeg, minLat - padDeg, maxLng + padDeg, maxLat + padDeg]
 }
 
-export function formatDistance(m: number): string {
-  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`
+export type DistanceUnits = 'km' | 'mi'
+
+const METERS_PER_MILE = 1609.344
+const FEET_PER_METER = 3.28084
+
+// The app shows one unit system at a time; App sets it from the visitor's setting.
+let units: DistanceUnits = 'km'
+export function setDistanceUnits(u: DistanceUnits): void { units = u }
+export function distanceUnits(): DistanceUnits { return units }
+
+/** "350 m" / "2.9 km", or "500 ft" / "1.8 mi", like Google Maps. */
+export function formatDistance(m: number, u: DistanceUnits = units): string {
+  if (u === 'mi') {
+    const mi = m / METERS_PER_MILE
+    if (mi < 0.1) return `${Math.max(10, Math.round((m * FEET_PER_METER) / 10) * 10)} ft`
+    return mi < 10 ? `${mi.toFixed(1)} mi` : `${Math.round(mi)} mi`
+  }
+  if (m < 1000) return `${Math.max(1, Math.round(m / 10) * 10)} m`
+  return m < 10000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 1000)} km`
+}
+
+/** Search radius choices in round numbers of the visitor's units (stored in meters). */
+export function radiusChoices(u: DistanceUnits = units): { m: number; label: string }[] {
+  return u === 'mi'
+    ? [[0.25, '¼ mi'], [0.5, '½ mi'], [1, '1 mi'], [3, '3 mi'], [5, '5 mi'], [15, '15 mi']].map(([v, label]) => ({ m: Math.round((v as number) * METERS_PER_MILE), label: label as string }))
+    : [[500, '500 m'], [1000, '1 km'], [2000, '2 km'], [5000, '5 km'], [10000, '10 km'], [25000, '25 km']].map(([m, label]) => ({ m: m as number, label: label as string }))
+}
+
+/** The closest radius choice to a distance, so switching units keeps a sensible search area. */
+export function snapRadius(m: number, u: DistanceUnits = units): number {
+  return radiusChoices(u).reduce((best, c) => (Math.abs(c.m - m) < Math.abs(best - m) ? c.m : best), radiusChoices(u)[0].m)
+}
+
+/** Miles in the US, UK, Liberia and Myanmar; kilometers elsewhere. */
+export function detectUnits(timeZone?: string, languages: readonly string[] = []): DistanceUnits {
+  if (timeZone) {
+    if (/^(America\/(New_York|Chicago|Denver|Los_Angeles|Phoenix|Anchorage|Juneau|Sitka|Nome|Adak|Boise|Detroit|Menominee|Metlakatla|Yakutat|Indiana\/.*|Kentucky\/.*|North_Dakota\/.*|Puerto_Rico)|Pacific\/(Honolulu|Guam)|Europe\/(London|Belfast)|Africa\/Monrovia|Asia\/(Yangon|Rangoon))$/.test(timeZone)) return 'mi'
+    return 'km'
+  }
+  const region = languages[0]?.split('-')[1]?.toUpperCase()
+  return region && ['US', 'GB', 'LR', 'MM'].includes(region) ? 'mi' : 'km'
+}
+
+export function browserUnits(): DistanceUnits {
+  try {
+    return detectUnits(Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.languages ?? [navigator.language])
+  } catch {
+    return 'km'
+  }
 }
 
 export function formatDuration(s: number): string {

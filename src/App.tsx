@@ -3,7 +3,7 @@ import { MapView, type Layers } from './components/MapView'
 import { SearchBox } from './components/SearchBox'
 import { APP_NAME, MAP_STYLES, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS, type MapStyleId } from './config'
 import { browserNameView, browserWorldview, WORLDVIEWS, type WorldviewCode, type WorldviewSetting } from './lib/worldview'
-import { bboxOf, distanceMeters, formatDistance, formatDuration } from './lib/geo'
+import { bboxOf, browserUnits, distanceMeters, formatDistance, formatDuration, radiusChoices, setDistanceUnits, snapRadius } from './lib/geo'
 import { fetchAccessData, type AccessData } from './lib/overpass'
 import { openStatus } from './lib/hours'
 import { locationHelp, useLiveLocation } from './lib/useLiveLocation'
@@ -19,7 +19,6 @@ type Pick = 'from' | 'to' | 'report' | `stop-${number}` | null
 const MAX_STOPS = 5
 
 const MIN_DETAIL_ZOOM = 14
-const RADII = [500, 1000, 2000, 5000, 10000, 25000]
 // Below this many results we automatically look further out, like big map apps do.
 const MIN_RESULTS = 3
 
@@ -101,6 +100,11 @@ export default function App() {
   const viewCtrl = useRef<AbortController | null>(null)
   const viewTimer = useRef<number | undefined>(undefined)
 
+  const [autoUnits] = useState(browserUnits)
+  const units = settings.units === 'auto' ? autoUnits : settings.units
+  setDistanceUnits(units) // every distance below is shown in these units
+  const radii = radiusChoices(units)
+
   useEffect(() => saveSettings(settings), [settings])
   useEffect(() => saveReports(reports), [reports])
 
@@ -116,8 +120,10 @@ export default function App() {
     if (loc.status !== 'live') loc.start()
   }
 
-  const searchNearby = useCallback((category: string, radius: number, center: LngLat) => {
+  const searchNearby = useCallback((category: string, wanted: number, center: LngLat) => {
     const cat = CATEGORY_BY_ID[category]
+    const RADII = radiusChoices().map((c) => c.m)
+    const radius = snapRadius(wanted)
     nearbyCtrl.current?.abort()
     const ctrl = new AbortController()
     nearbyCtrl.current = ctrl
@@ -327,6 +333,7 @@ export default function App() {
         myAccuracy={loc.accuracy}
         worldview={worldview}
         nameView={nameView}
+        units={units}
         mapStyle={settings.mapLook}
         follow={follow && loc.status === 'live'}
         onUserMove={() => { setFollow(false); setUserPanned(true) }}
@@ -425,8 +432,8 @@ export default function App() {
               <div className="filters">
                 <label>
                   <span className="sr-only">Distance</span>
-                  <select value={nearby.radius} onChange={(e) => searchNearby(nearby.category!, Number(e.target.value), nearby.center ?? searchCenter)}>
-                    {RADII.map((r) => <option key={r} value={r}>Within {formatDistance(r)}</option>)}
+                  <select value={snapRadius(nearby.radius)} onChange={(e) => searchNearby(nearby.category!, Number(e.target.value), nearby.center ?? searchCenter)}>
+                    {radii.map((r) => <option key={r.m} value={r.m}>Within {r.label}</option>)}
                   </select>
                 </label>
                 <label className="check">
@@ -468,8 +475,8 @@ export default function App() {
               shownPlaces.length === 0 ? (
                 <p className="muted">
                   {openOnly && nearby.places.length > 0 ? 'Nothing open right now that lists its hours. ' : `Nothing found within ${formatDistance(nearby.radius)}. `}
-                  {nearby.radius < RADII[RADII.length - 1] && (
-                    <button type="button" className="link" onClick={() => searchNearby(nearby.category!, RADII[RADII.indexOf(nearby.radius) + 1] ?? 5000, nearby.center ?? searchCenter)}>Search wider</button>
+                  {nearby.radius < radii[radii.length - 1].m && (
+                    <button type="button" className="link" onClick={() => searchNearby(nearby.category!, radii.find((r) => r.m > nearby.radius)?.m ?? nearby.radius, nearby.center ?? searchCenter)}>Search wider</button>
                   )}
                 </p>
               ) : (
@@ -649,6 +656,16 @@ export default function App() {
                   <button key={id} type="button" role="radio" aria-checked={settings.mapLook === id}
                     className={settings.mapLook === id ? 'active' : ''}
                     onClick={() => setSettings({ ...settings, mapLook: id })}>{MAP_STYLES[id].label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="field">
+              <span>Distances</span>
+              <div className="seg" role="radiogroup" aria-label="Distance units">
+                {([['auto', `Automatic (${autoUnits === 'mi' ? 'miles' : 'km'})`], ['mi', 'Miles'], ['km', 'Kilometers']] as const).map(([id, label]) => (
+                  <button key={id} type="button" role="radio" aria-checked={settings.units === id}
+                    className={settings.units === id ? 'active' : ''}
+                    onClick={() => setSettings({ ...settings, units: id })}>{label}</button>
                 ))}
               </div>
             </div>
