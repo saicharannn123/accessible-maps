@@ -1,5 +1,5 @@
-import { PHOTON_REVERSE_URL } from '../config'
-import { CATEGORIES } from './places'
+import { OVERPASS_URLS, PHOTON_REVERSE_URL } from '../config'
+import { CATEGORIES, fetchWithTimeout } from './places'
 import { distanceMeters, formatDistance } from './geo'
 import type { LngLat, Place } from './types'
 
@@ -12,9 +12,33 @@ export interface PlaceKind {
   icon: string
   words: string[]
   tags: string[]
+  /** OSM sport=* value: places where this sport is played (courts, clubs, halls). */
+  sport?: string
+  /** OSM cuisine=* pattern for food kinds (restaurants serving it). */
+  cuisine?: string
 }
 
+const SPORTS_PLACES = ['leisure:sports_centre', 'leisure:sports_hall', 'leisure:fitness_centre', 'shop:sports']
+
 const EXTRA_KINDS: PlaceKind[] = [
+  { label: 'Badminton', icon: '🏸', words: ['badminton', 'badminton court', 'shuttle'], tags: SPORTS_PLACES, sport: 'badminton' },
+  { label: 'Tennis', icon: '🎾', words: ['tennis', 'tennis court'], tags: ['leisure:sports_centre', 'shop:sports'], sport: 'tennis' },
+  { label: 'Pickleball', icon: '🏓', words: ['pickleball'], tags: ['leisure:sports_centre'], sport: 'pickleball' },
+  { label: 'Table tennis', icon: '🏓', words: ['table tennis', 'ping pong'], tags: ['leisure:sports_centre'], sport: 'table_tennis' },
+  { label: 'Basketball', icon: '🏀', words: ['basketball', 'basketball court'], tags: ['leisure:sports_centre'], sport: 'basketball' },
+  { label: 'Soccer', icon: '⚽', words: ['soccer', 'football field', 'soccer field'], tags: ['leisure:sports_centre'], sport: 'soccer' },
+  { label: 'Cricket', icon: '🏏', words: ['cricket', 'cricket ground'], tags: ['leisure:sports_centre'], sport: 'cricket' },
+  { label: 'Swimming', icon: '🏊', words: ['swimming', 'swimming pool', 'pool', 'swim'], tags: ['leisure:swimming_pool', 'leisure:sports_centre', 'leisure:water_park'], sport: 'swimming' },
+  { label: 'Golf', icon: '⛳', words: ['golf', 'golf course', 'driving range'], tags: ['leisure:golf_course', 'golf:driving_range'], sport: 'golf' },
+  { label: 'Bowling', icon: '🎳', words: ['bowling', 'bowling alley'], tags: ['leisure:bowling_alley'], sport: '10pin' },
+  { label: 'Ice skating', icon: '⛸️', words: ['ice skating', 'ice rink', 'skating'], tags: ['leisure:ice_rink'], sport: 'ice_skating' },
+  { label: 'Yoga', icon: '🧘', words: ['yoga', 'yoga studio'], tags: ['leisure:fitness_centre'], sport: 'yoga' },
+  { label: 'Sushi', icon: '🍣', words: ['sushi', 'japanese food', 'japanese restaurant'], tags: [], cuisine: 'sushi|japanese' },
+  { label: 'Pizza', icon: '🍕', words: ['pizza', 'pizzeria'], tags: [], cuisine: 'pizza' },
+  { label: 'Indian food', icon: '🍛', words: ['indian food', 'indian restaurant', 'biryani', 'curry'], tags: [], cuisine: 'indian' },
+  { label: 'Chinese food', icon: '🥡', words: ['chinese food', 'chinese restaurant'], tags: [], cuisine: 'chinese' },
+  { label: 'Mexican food', icon: '🌮', words: ['mexican food', 'tacos', 'taco', 'mexican restaurant', 'burrito'], tags: [], cuisine: 'mexican' },
+  { label: 'Thai food', icon: '🍜', words: ['thai food', 'thai restaurant'], tags: [], cuisine: 'thai' },
   { label: 'Hardware stores', icon: '🔨', words: ['hardware', 'home improvement', 'diy', 'tools', 'home depot', 'lowes'], tags: ['shop:hardware', 'shop:doityourself', 'shop:trade'] },
   { label: 'Bakeries', icon: '🥐', words: ['bakery', 'bakeries', 'bread', 'pastry'], tags: ['shop:bakery', 'shop:pastry'] },
   { label: 'Ice cream', icon: '🍦', words: ['ice cream', 'gelato', 'frozen yogurt'], tags: ['amenity:ice_cream'] },
@@ -134,6 +158,7 @@ function placeFrom(f: PhotonFeature, from: LngLat | undefined, icon?: string): P
 
 /** The nearest places of a kind (e.g. hardware stores), nearest first. */
 export async function searchNearbyKind(kind: PlaceKind, center: LngLat, signal?: AbortSignal): Promise<Place[]> {
+  if (!kind.tags.length) return []
   const params = new URLSearchParams({ lat: center[1].toFixed(6), lon: center[0].toFixed(6), radius: '30', limit: '8', lang: 'en' })
   for (const t of kind.tags) params.append('osm_tag', t)
   const res = await fetch(`${PHOTON_REVERSE_URL}?${params}`, { signal })
@@ -143,3 +168,40 @@ export async function searchNearbyKind(kind: PlaceKind, center: LngLat, signal?:
 }
 
 export { placeFrom as photonPlace }
+
+/**
+ * Places where a sport is played, or restaurants serving a cuisine, near you, read straight
+ * from OpenStreetMap tags (sport=badminton, cuisine=sushi). Overpass can be busy, so this gives
+ * up quickly and the rest of the search still works without it.
+ */
+export async function searchNearbyTagged(kind: PlaceKind, center: LngLat, signal?: AbortSignal): Promise<Place[]> {
+  const filter = kind.sport ? `["sport"~"(^|;)${kind.sport}($|;)"]` : kind.cuisine ? `["cuisine"~"(^|;)(${kind.cuisine})($|;)"]` : null
+  if (!filter) return []
+  const [lng, lat] = center
+  const q = `[out:json][timeout:8];nwr${filter}(around:25000,${lat},${lng});out center tags 40;`
+  for (const url of OVERPASS_URLS.slice(0, 2)) {
+    try {
+      const res = await fetchWithTimeout(url, { method: 'POST', body: new URLSearchParams({ data: q }) }, 7000, signal)
+      if (!res.ok) continue
+      const data = (await res.json()) as { elements: { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[] }
+      return data.elements.flatMap((el) => {
+        const c = el.center ?? (el.lat != null && el.lon != null ? { lat: el.lat, lon: el.lon } : null)
+        if (!c) return []
+        const t = el.tags ?? {}
+        const coords: LngLat = [c.lon, c.lat]
+        const what = kind.sport ? (t.name ? '' : `${kind.label} ${t.leisure === 'pitch' ? 'court' : 'place'}`) : ''
+        const street = [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' ')
+        const where = [street, t['addr:city']].filter(Boolean).join(', ')
+        return [{
+          name: t.name || what || kind.label,
+          detail: [formatDistance(distanceMeters(center, coords)), where].filter(Boolean).join(' · '),
+          coords, icon: kind.icon,
+        }]
+      })
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e
+    }
+  }
+  return []
+}
+

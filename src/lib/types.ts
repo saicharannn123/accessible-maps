@@ -25,6 +25,8 @@ export interface Place {
   coords: LngLat
   /** Emoji for the kind of place, shown in search results. */
   icon?: string
+  /** Far from you (shown under "Farther away"). */
+  far?: boolean
 }
 
 export type ReportType =

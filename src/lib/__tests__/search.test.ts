@@ -19,3 +19,13 @@ describe('place-kind search', () => {
     expect(typoDistance('hardwrae', 'hardware')).toBe(1)
   })
 })
+
+describe('sports and food searches', () => {
+  it('finds the sport or cuisine people mean', () => {
+    expect(matchKind('badminton')?.sport).toBe('badminton')
+    expect(matchKind('badminton courts near me')?.sport).toBe('badminton')
+    expect(matchKind('tennis')?.sport).toBe('tennis')
+    expect(matchKind('sushi')?.cuisine).toContain('sushi')
+    expect(matchKind('dentist')?.label).toBe('Dentists')
+  })
+})

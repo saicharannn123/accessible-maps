@@ -150,7 +150,7 @@ export function parseNearby(elements: OsmElement[], cat: Category, center: LngLa
 }
 
 /** fetch() that gives up after `ms`, and also stops when the caller aborts. */
-async function fetchWithTimeout(url: string, init: RequestInit, ms: number, signal?: AbortSignal): Promise<Response> {
+export async function fetchWithTimeout(url: string, init: RequestInit, ms: number, signal?: AbortSignal): Promise<Response> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(new Error('timeout')), ms)
   const onAbort = () => ctrl.abort(signal?.reason)
