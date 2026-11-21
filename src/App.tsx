@@ -10,6 +10,7 @@ import { locationHelp, useLiveLocation } from './lib/useLiveLocation'
 import { CATEGORIES, CATEGORY_BY_ID, fetchNearby, type NearbyPlace } from './lib/places'
 import { loadReports, saveReports, timeAgo } from './lib/reports'
 import { planRoute } from './lib/routing'
+import { reverseGeocode } from './lib/geocode'
 import { loadSettings, saveSettings } from './lib/settings'
 import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
 import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, Settings, TravelMode } from './lib/types'
@@ -91,7 +92,12 @@ export default function App() {
   // Stops between start and destination. Each has an id so its search box keeps its text.
   const [stops, setStops] = useState<{ id: number; place: Place | null }[]>([])
   const nextStopId = useRef(1)
+  const stopsRef = useRef(stops)
+  useEffect(() => { stopsRef.current = stops })
   const [pick, setPick] = useState<Pick>(null)
+  // The Directions box a map tap fills: the one you last clicked into, else the destination.
+  const [activeField, setActiveField] = useState<'from' | 'to' | `stop-${number}`>('to')
+  const [mapMenu, setMapMenu] = useState<{ at: LngLat; x: number; y: number; name: string | null } | null>(null)
   const [routeState, setRouteState] = useState<{ key: string; route: RouteResult | null; error: string | null }>({ key: '', route: null, error: null })
   const [routing, setRouting] = useState(false)
   const [flyTo, setFlyTo] = useState<LngLat | null>(null)
@@ -229,17 +235,46 @@ export default function App() {
     if (lastView.current) onViewChange(lastView.current.bbox, lastView.current.zoom)
   }, [tab, settings.travelMode, onViewChange])
 
-  const onMapClick = useCallback((c: LngLat) => {
-    if (pick === 'from') setFrom(pinnedPlace(c))
-    else if (pick === 'to') setTo(pinnedPlace(c))
-    else if (pick?.startsWith('stop-')) {
-      const id = Number(pick.slice(5))
-      setStops((ss) => ss.map((st) => (st.id === id ? { ...st, place: pinnedPlace(c) } : st)))
+  // Put a dropped pin into a trip box right away, then swap in the street address when it arrives.
+  const dropPin = useCallback((field: 'from' | 'to' | `stop-${number}`, c: LngLat) => {
+    const set = (p: Place) => {
+      if (field === 'from') setFrom((cur) => (!cur || cur.coords === c ? p : cur))
+      else if (field === 'to') setTo((cur) => (!cur || cur.coords === c ? p : cur))
+      else {
+        const id = Number(field.slice(5))
+        setStops((ss) => ss.map((st) => (st.id === id && (!st.place || st.place.coords === c) ? { ...st, place: p } : st)))
+      }
     }
+    if (field === 'from') setFrom(pinnedPlace(c))
+    else if (field === 'to') setTo(pinnedPlace(c))
+    else setStops((ss) => ss.map((st) => (st.id === Number(field.slice(5)) ? { ...st, place: pinnedPlace(c) } : st)))
+    reverseGeocode(c).then((p) => { if (p) set(p) }).catch(() => {})
+  }, [])
+
+  const onMapClick = useCallback((c: LngLat) => {
+    setMapMenu(null)
+    if (pick === 'from' || pick === 'to' || pick?.startsWith('stop-')) dropPin(pick as 'from' | 'to' | `stop-${number}`, c)
     else if (pick === 'report' || tab === 'report') setDraft((d) => ({ ...d, coords: c }))
-    else return
+    else if (tab === 'route') {
+      // Tap the map to fill the box you're in; the destination by default.
+      dropPin(activeField, c)
+      if (activeField !== 'to') setActiveField('to')
+    } else return
     setPick(null)
-  }, [pick, tab])
+  }, [pick, tab, activeField, dropPin])
+
+  const onMapContext = useCallback((c: LngLat, screen: { x: number; y: number }) => {
+    setMapMenu({ at: c, x: screen.x, y: screen.y, name: null })
+    reverseGeocode(c).then((p) => setMapMenu((m) => (m && m.at === c ? { ...m, name: p ? p.name : null } : m))).catch(() => {})
+  }, [])
+
+  const onPinDrag = useCallback((role: 'from' | 'to' | number, c: LngLat) => {
+    if (role === 'from' || role === 'to') dropPin(role, c)
+    else {
+      const st = stopsRef.current.filter((x) => x.place)[role] // pins are drawn for filled stops only
+      if (st) dropPin(`stop-${st.id}`, c)
+    }
+  }, [dropPin])
 
   // With no start chosen, Directions start from wherever you are right now.
   const useMyLocation = () => {
@@ -249,9 +284,25 @@ export default function App() {
   const fromPlace: Place | null = from ?? (myLocation ? pinnedPlace(myLocation, 'My location') : null)
   const stopPlaces = stops.flatMap((st) => (st.place ? [st.place] : []))
 
-  const addStop = () => {
+  const addStop = (place: Place | null = null) => {
     if (stops.length >= MAX_STOPS) return
-    setStops((ss) => [...ss, { id: nextStopId.current++, place: null }])
+    const id = nextStopId.current++
+    setStops((ss) => [...ss, { id, place }])
+    if (!place) setActiveField(`stop-${id}`)
+  }
+
+  // "Directions to here / from here / Add as stop" from the right-click or long-press menu.
+  const fromMenu = (what: 'to' | 'from' | 'stop') => {
+    if (!mapMenu) return
+    const c = mapMenu.at
+    const place: Place = mapMenu.name ? { name: mapMenu.name, detail: pinnedPlace(c).detail, coords: c } : pinnedPlace(c)
+    setMapMenu(null)
+    setTab('route')
+    setSheetOpen(true)
+    if (what === 'to') { setTo(place); if (!mapMenu.name) dropPin('to', c) }
+    else if (what === 'from') { setFrom(place); if (!mapMenu.name) dropPin('from', c) }
+    else if (!to) setTo(place)
+    else addStop(place)
   }
   const setStop = (id: number, place: Place | null) => setStops((ss) => ss.map((st) => (st.id === id ? { ...st, place } : st)))
   const removeStop = (id: number) => setStops((ss) => ss.filter((st) => st.id !== id))
@@ -277,6 +328,17 @@ export default function App() {
   const route = routeState.key === tripKey ? routeState.route : null
   const routeError = routeState.key === tripKey ? routeState.error : null
 
+  // Like Google Maps: once there's a start and a destination, show the route straight away,
+  // and again whenever a pin, stop or travel mode changes.
+  const autoKey = useRef('')
+  const findRouteRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    if (tab !== 'route' || !fromPlace || !to || autoKey.current === tripKey) return
+    autoKey.current = tripKey
+    const t = window.setTimeout(() => findRouteRef.current(), 300)
+    return () => window.clearTimeout(t)
+  }, [tab, tripKey, fromPlace, to])
+
   const findRoute = async () => {
     if (!fromPlace || !to) return
     const key = tripKey
@@ -291,6 +353,8 @@ export default function App() {
     }
   }
 
+
+  useEffect(() => { findRouteRef.current = () => { void findRoute() } })
 
   // Details for the chosen destination, from what is loaded on the map.
   const destInfo = useMemo(() => {
@@ -340,6 +404,8 @@ export default function App() {
         fitTo={fitTo}
         onPlaceClick={selectPlace}
         onMapClick={onMapClick}
+        onMapContext={onMapContext}
+        onPinDrag={onPinDrag}
         onViewChange={onViewChange}
       />
 
@@ -363,6 +429,15 @@ export default function App() {
       )}
 
       {(pickHint || detailNotice) && tab !== 'nearby' && <div className="toast" role="status">{pickHint ?? detailNotice}</div>}
+      {mapMenu && (
+        <div className="map-menu" role="menu" style={{ left: Math.min(mapMenu.x, window.innerWidth - 230), top: Math.min(mapMenu.y, window.innerHeight - 200) }}>
+          <div className="map-menu-title">{mapMenu.name ?? pinnedPlace(mapMenu.at).detail}</div>
+          <button type="button" role="menuitem" onClick={() => fromMenu('to')}>🚩 Directions to here</button>
+          <button type="button" role="menuitem" onClick={() => fromMenu('from')}>🟢 Directions from here</button>
+          <button type="button" role="menuitem" disabled={stops.length >= MAX_STOPS} onClick={() => fromMenu('stop')}>➕ {to ? 'Add as a stop' : 'Add to trip'}</button>
+          <button type="button" role="menuitem" className="muted" onClick={() => setMapMenu(null)}>Close</button>
+        </div>
+      )}
 
       {loc.status === 'prompt' && (
         <div className="loc-modal-backdrop">
@@ -520,7 +595,7 @@ export default function App() {
               <ol className="trip-points">
                 <li>
                   <span className="trip-dot start" aria-hidden="true" />
-                  <SearchBox label="Start" hideLabel value={fromPlace} near={searchCenter}
+                  <SearchBox label="Start" hideLabel value={fromPlace} near={searchCenter} onFocus={() => setActiveField('from')}
                     placeholder={loc.status === 'asking' ? 'Finding your location…' : 'Choose a starting point'}
                     onSelect={(p) => { setFrom(p); if (p) setFlyTo(p.coords) }}
                     extraOptions={[{ label: 'Use my location', onPick: useMyLocation }, { label: 'Pick on map', onPick: () => setPick('from') }]} />
@@ -528,7 +603,7 @@ export default function App() {
                 {stops.map((st, i) => (
                   <li key={st.id}>
                     <span className="trip-dot stop" aria-hidden="true">{i + 1}</span>
-                    <SearchBox label={`Stop ${i + 1}`} hideLabel value={st.place} placeholder={`Add stop ${i + 1}`}
+                    <SearchBox label={`Stop ${i + 1}`} hideLabel value={st.place} placeholder={`Add stop ${i + 1}`} onFocus={() => setActiveField(`stop-${st.id}`)}
                       near={fromPlace?.coords ?? searchCenter}
                       onSelect={(p) => { setStop(st.id, p); if (p) setFlyTo(p.coords) }}
                       extraOptions={[{ label: 'Pick on map', onPick: () => setPick(`stop-${st.id}`) }]} />
@@ -537,7 +612,7 @@ export default function App() {
                 ))}
                 <li>
                   <span className="trip-dot end" aria-hidden="true" />
-                  <SearchBox label="Destination" hideLabel value={to} placeholder="Choose a destination"
+                  <SearchBox label="Destination" hideLabel value={to} placeholder="Choose a destination or tap the map" onFocus={() => setActiveField('to')}
                     near={fromPlace?.coords ?? searchCenter}
                     onSelect={(p) => { setTo(p); if (p) setFlyTo(p.coords) }}
                     extraOptions={[{ label: 'Pick on map', onPick: () => setPick('to') }]} />
@@ -548,7 +623,7 @@ export default function App() {
             </div>
 
             <div className="trip-actions">
-              <button type="button" className="chip" disabled={stops.length >= MAX_STOPS} onClick={addStop}>＋ Add stop</button>
+              <button type="button" className="chip" disabled={stops.length >= MAX_STOPS} onClick={() => addStop()}>＋ Add stop</button>
               {(from !== null || loc.status !== 'live') && (
                 <button type="button" className="chip loc" onClick={useMyLocation}>
                   <span aria-hidden="true">◎</span> {loc.status === 'asking' ? 'Finding your location…' : 'Use my live location'}

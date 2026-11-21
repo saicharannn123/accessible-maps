@@ -12,6 +12,8 @@ interface Props {
   near?: [number, number]
   /** Keep the label for screen readers only. */
   hideLabel?: boolean
+  /** Called when the box gets focus (e.g. so a map tap fills this box). */
+  onFocus?: () => void
 }
 
 let nextId = 0
@@ -20,7 +22,7 @@ let nextId = 0
  * A maps-style search box: suggestions as you type, nearest first, typo-tolerant.
  * Enter picks the highlighted (or top) suggestion, even if it is still loading.
  */
-export function SearchBox({ label, placeholder, value, onSelect, extraOptions = [], near, hideLabel }: Props) {
+export function SearchBox({ label, placeholder, value, onSelect, extraOptions = [], near, hideLabel, onFocus }: Props) {
   const [text, setText] = useState(value?.name ?? '')
   const [found, setFound] = useState<(SearchResults & { query: string }) | null>(null)
   const [open, setOpen] = useState(false)
@@ -107,7 +109,7 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
           autoComplete="off"
           value={text}
           placeholder={placeholder}
-          onFocus={(e) => { setOpen(true); e.target.select() }}
+          onFocus={(e) => { setOpen(true); e.target.select(); onFocus?.() }}
           onBlur={() => window.setTimeout(() => { setOpen(false); enterPending.current = false }, 150)}
           onKeyDown={onKeyDown}
           onChange={(e) => {
