@@ -31,6 +31,11 @@ interface Props {
   places: NearbyPlace[]
   selectedPlaceId: string | null
   myLocation: LngLat | null
+  myAccuracy: number | null
+  /** Keep the camera centered on myLocation as it moves. */
+  follow: boolean
+  /** The visitor dragged or zoomed the map themselves. */
+  onUserMove: () => void
   /** Points the camera should frame, e.g. a list of nearby results. */
   fitTo: { points: LngLat[]; key: number } | null
   onPlaceClick: (id: string) => void
@@ -69,14 +74,16 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, layers, flyTo, places, selectedPlaceId, myLocation, fitTo, onPlaceClick, onMapClick, onViewChange } = props
+  const { access, reports, route, from, to, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
   const clickRef = useRef(onMapClick)
   const viewRef = useRef(onViewChange)
   const placeClickRef = useRef(onPlaceClick)
+  const userMoveRef = useRef(onUserMove)
   useEffect(() => {
+    userMoveRef.current = onUserMove
     placeClickRef.current = onPlaceClick
     clickRef.current = onMapClick
     viewRef.current = onViewChange
@@ -139,8 +146,15 @@ export function MapView(props: Props) {
           'circle-color': ['get', 'color'],
           'circle-stroke-color': '#fff', 'circle-stroke-width': 2,
         } })
+      // Accuracy halo: meters turned into pixels for the current zoom (2^zoom doubles each level).
       map.addLayer({ id: 'me-halo', type: 'circle', source: 'me',
-        paint: { 'circle-radius': 18, 'circle-color': '#1a73e8', 'circle-opacity': 0.18 } })
+        paint: {
+          'circle-radius': ['interpolate', ['exponential', 2], ['zoom'],
+            0, ['max', 14, ['/', ['get', 'acc'], 78271.5]],
+            22, ['max', 14, ['/', ['get', 'acc'], 0.0187]]],
+          'circle-color': '#1a73e8', 'circle-opacity': 0.15,
+          'circle-stroke-color': '#1a73e8', 'circle-stroke-opacity': 0.3, 'circle-stroke-width': 1,
+        } })
       map.addLayer({ id: 'me', type: 'circle', source: 'me',
         paint: { 'circle-radius': 7, 'circle-color': '#1a73e8', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
 
@@ -180,6 +194,8 @@ export function MapView(props: Props) {
       if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
     })
     map.on('moveend', emitView)
+    // Only real drags/zooms by the visitor carry an originalEvent; our own camera moves don't.
+    map.on('dragstart', (e) => { if (e.originalEvent) userMoveRef.current() })
 
     return () => { map.remove(); mapRef.current = null }
   }, [])
@@ -249,8 +265,21 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     if (!ready) return
-    setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation)] } : empty)
-  }, [myLocation, ready])
+    setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation, { acc: myAccuracy ?? 0 })] } : empty)
+  }, [myLocation, myAccuracy, ready])
+
+  // Follow the visitor: jump in on the first fix, then glide along as they move.
+  const hadFix = useRef(false)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map || !myLocation || !follow) return
+    if (!hadFix.current) {
+      hadFix.current = true
+      map.flyTo({ center: myLocation, zoom: Math.max(map.getZoom(), 15) })
+    } else {
+      map.easeTo({ center: myLocation, duration: 600 })
+    }
+  }, [myLocation, follow, ready])
 
   useEffect(() => {
     const map = mapRef.current

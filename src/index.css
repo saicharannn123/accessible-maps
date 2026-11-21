@@ -165,3 +165,15 @@ section h2 { font-size: 1rem; margin: 8px 0 0; }
 .open-line .is-open { color: #15803d; }
 .open-line .is-closed { color: #b91c1c; }
 .filters { flex-wrap: wrap; gap: 8px 12px; }
+
+/* ---- Live location ---- */
+.loc-modal-backdrop { position: fixed; inset: 0; z-index: 10; background: rgba(17,24,39,.45); display: grid; place-items: center; padding: 16px; }
+.loc-modal { background: #fff; border-radius: 16px; max-width: 380px; width: 100%; padding: 24px; display: flex; flex-direction: column; gap: 10px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+.loc-modal h2 { margin: 0; font-size: 1.25rem; }
+.loc-modal p { margin: 0; }
+.loc-modal-icon { font-size: 2.2rem; }
+.link.center { align-self: center; padding: 8px; }
+.loc-notice { border: 1px solid #fecaca; background: #fef2f2; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
+.loc-notice.soft { border-color: #bfdbfe; background: #eff6ff; }
+.loc-notice p { margin: 0; }
+.loc-notice .small-btn { min-height: 40px; padding: 8px 12px; align-self: flex-start; margin-top: 4px; }
