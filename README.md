@@ -39,6 +39,16 @@ Without a key, the app uses plain walking directions and warns you about steps i
 
 Edit `PILOT_CITY` in `src/config.ts`. It is set to Seattle as a placeholder because its sidewalk data in OpenStreetMap is good.
 
+## Put it online (free, GitHub Pages)
+
+The workflow in `.github/workflows/deploy-pages.yml` publishes the site every time `main` changes.
+
+1. One time only: open the repo's **Settings → Pages** and set **Source** to **GitHub Actions**.
+2. Merge to `main` (or run the "Deploy to GitHub Pages" workflow from the Actions tab).
+3. The site goes live at https://saicharannn123.github.io/accessible-maps/
+
+Your browser will ask to share your location the first time, which is what makes "Near me" work. Location only works on https sites, which GitHub Pages is.
+
 ## Other commands
 
 | Command | What it does |
