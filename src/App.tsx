@@ -178,11 +178,20 @@ export default function App() {
     setTab('route')
   }
 
+  // Accessibility details (restrooms, lighting, steps) come from Overpass, which is slow and
+  // rate-limited, so only load them on the tabs that show them, not while browsing Near me.
+  const tabRef = useRef(tab)
+  const lastView = useRef<{ bbox: [number, number, number, number]; zoom: number } | null>(null)
   const onViewChange = useCallback((bbox: [number, number, number, number], zoom: number) => {
     const c: LngLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
     setMapCenter(c)
+    lastView.current = { bbox, zoom }
     window.clearTimeout(viewTimer.current)
     viewCtrl.current?.abort()
+    if (tabRef.current === 'nearby' || tabRef.current === 'settings') {
+      setDetailNotice(null)
+      return
+    }
     if (zoom < MIN_DETAIL_ZOOM) {
       setDetailNotice('Zoom in to see restrooms, lighting and steps')
       return
@@ -196,6 +205,11 @@ export default function App() {
         .catch((e) => { if (e.name !== 'AbortError') setDetailNotice('Could not load accessibility details. Try again in a moment.') })
     }, 500)
   }, [])
+
+  useEffect(() => {
+    tabRef.current = tab
+    if (lastView.current) onViewChange(lastView.current.bbox, lastView.current.zoom)
+  }, [tab, onViewChange])
 
   const onMapClick = useCallback((c: LngLat) => {
     if (pick === 'from') setFrom(pinnedPlace(c))
@@ -273,7 +287,7 @@ export default function App() {
         myLocation={myLocation}
         myAccuracy={loc.accuracy}
         worldview={worldview}
-        mapStyle={settings.mapStyle}
+        mapStyle={settings.mapLook}
         follow={follow && loc.status === 'live'}
         onUserMove={() => { setFollow(false); setUserPanned(true) }}
         fitTo={fitTo}
@@ -540,9 +554,9 @@ export default function App() {
               <span>Map look</span>
               <div className="seg" role="radiogroup" aria-label="Map look">
                 {(Object.keys(MAP_STYLES) as MapStyleId[]).map((id) => (
-                  <button key={id} type="button" role="radio" aria-checked={settings.mapStyle === id}
-                    className={settings.mapStyle === id ? 'active' : ''}
-                    onClick={() => setSettings({ ...settings, mapStyle: id })}>{MAP_STYLES[id].label}</button>
+                  <button key={id} type="button" role="radio" aria-checked={settings.mapLook === id}
+                    className={settings.mapLook === id ? 'active' : ''}
+                    onClick={() => setSettings({ ...settings, mapLook: id })}>{MAP_STYLES[id].label}</button>
                 ))}
               </div>
             </div>

@@ -57,5 +57,6 @@ export interface Settings {
   maxInclinePercent: number
   /** Whose view of country borders to show: 'auto' (from your region), 'osm' (as on the ground) or a country code. */
   worldview: import('./worldview').WorldviewSetting
-  mapStyle: import('../config').MapStyleId
+  /** Base map look. Renamed from mapStyle so everyone moves to the new Clean default once. */
+  mapLook: import('../config').MapStyleId
 }

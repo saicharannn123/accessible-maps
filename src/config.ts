@@ -7,7 +7,9 @@ export const PILOT_CITY = {
 }
 
 // Free, keyless map styles (OpenFreeMap, built on OpenStreetMap data).
+// "Clean" is BM Locator's own look: OpenFreeMap Liberty's data, restyled in src/lib/cleanStyle.ts.
 export const MAP_STYLES = {
+  clean: { label: 'Clean', url: 'https://tiles.openfreemap.org/styles/liberty' },
   liberty: { label: 'Standard', url: 'https://tiles.openfreemap.org/styles/liberty' },
   bright: { label: 'Bright', url: 'https://tiles.openfreemap.org/styles/bright' },
   positron: { label: 'Light', url: 'https://tiles.openfreemap.org/styles/positron' },
