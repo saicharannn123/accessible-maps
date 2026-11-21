@@ -8,6 +8,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { MAP_STYLE_URL, PILOT_CITY } from '../config'
 import { bboxOf } from '../lib/geo'
 import type { AccessData } from '../lib/overpass'
+import { CATEGORY_BY_ID, type NearbyPlace } from '../lib/places'
 import { REPORT_LABELS } from '../lib/types'
 import type { LngLat, Report, RouteResult } from '../lib/types'
 import { timeAgo } from '../lib/reports'
@@ -27,6 +28,12 @@ interface Props {
   to: LngLat | null
   layers: Layers
   flyTo: LngLat | null
+  places: NearbyPlace[]
+  selectedPlaceId: string | null
+  myLocation: LngLat | null
+  /** Points the camera should frame, e.g. a list of nearby results. */
+  fitTo: { points: LngLat[]; key: number } | null
+  onPlaceClick: (id: string) => void
   onMapClick: (p: LngLat) => void
   onViewChange: (bbox: [number, number, number, number], zoom: number) => void
 }
@@ -62,13 +69,15 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, layers, flyTo, onMapClick, onViewChange } = props
+  const { access, reports, route, from, to, layers, flyTo, places, selectedPlaceId, myLocation, fitTo, onPlaceClick, onMapClick, onViewChange } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
   const clickRef = useRef(onMapClick)
   const viewRef = useRef(onViewChange)
+  const placeClickRef = useRef(onPlaceClick)
   useEffect(() => {
+    placeClickRef.current = onPlaceClick
     clickRef.current = onMapClick
     viewRef.current = onViewChange
   })
@@ -83,7 +92,6 @@ export function MapView(props: Props) {
     })
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
-    map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false }), 'top-right')
 
     const emitView = () => {
       const b = map.getBounds()
@@ -91,7 +99,7 @@ export function MapView(props: Props) {
     }
 
     map.on('load', () => {
-      for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints']) {
+      for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'places', 'me']) {
         map.addSource(id, { type: 'geojson', data: empty })
       }
       map.addLayer({ id: 'lit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], true],
@@ -123,6 +131,24 @@ export function MapView(props: Props) {
           'circle-stroke-color': '#fff', 'circle-stroke-width': 3,
         } })
 
+      map.addLayer({ id: 'places-selected', type: 'circle', source: 'places', filter: ['==', ['get', 'selected'], true],
+        paint: { 'circle-radius': 20, 'circle-color': ['get', 'color'], 'circle-opacity': 0.25 } })
+      map.addLayer({ id: 'places', type: 'circle', source: 'places',
+        paint: {
+          'circle-radius': ['case', ['==', ['get', 'selected'], true], 11, 8],
+          'circle-color': ['get', 'color'],
+          'circle-stroke-color': '#fff', 'circle-stroke-width': 2,
+        } })
+      map.addLayer({ id: 'me-halo', type: 'circle', source: 'me',
+        paint: { 'circle-radius': 18, 'circle-color': '#1a73e8', 'circle-opacity': 0.18 } })
+      map.addLayer({ id: 'me', type: 'circle', source: 'me',
+        paint: { 'circle-radius': 7, 'circle-color': '#1a73e8', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
+
+      map.on('click', 'places', (e) => {
+        const id = e.features?.[0]?.properties?.id
+        if (id) placeClickRef.current(String(id))
+      })
+
       map.on('click', 'restrooms', (e) => {
         const p = e.features?.[0]?.properties
         if (!p) return
@@ -141,7 +167,7 @@ export function MapView(props: Props) {
           `<strong>${escapeHtml(p.label)}</strong><br>${escapeHtml(p.ago)}${p.note ? `<br>"${escapeHtml(p.note)}"` : ''}`,
         ).addTo(map)
       })
-      for (const id of ['restrooms', 'reports']) {
+      for (const id of ['restrooms', 'reports', 'places']) {
         map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
         map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })
       }
@@ -150,7 +176,7 @@ export function MapView(props: Props) {
     })
 
     map.on('click', (e) => {
-      const hits = map.getLayer('restrooms') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports'] }) : []
+      const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places'] }) : []
       if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
     })
     map.on('moveend', emitView)
@@ -212,7 +238,37 @@ export function MapView(props: Props) {
   }, [layers, ready])
 
   useEffect(() => {
-    if (flyTo) mapRef.current?.flyTo({ center: flyTo, zoom: Math.max(mapRef.current.getZoom(), 16) })
+    if (!ready) return
+    setData('places', {
+      type: 'FeatureCollection',
+      features: places.map((p) => point(p.coords, {
+        id: p.id, color: CATEGORY_BY_ID[p.category]?.color ?? '#1a5fd6', selected: p.id === selectedPlaceId,
+      })),
+    })
+  }, [places, selectedPlaceId, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation)] } : empty)
+  }, [myLocation, ready])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map || !fitTo || fitTo.points.length === 0) return
+    if (fitTo.points.length === 1) {
+      map.easeTo({ center: fitTo.points[0], zoom: 15 })
+      return
+    }
+    const [w, s, e, n] = bboxOf(fitTo.points, 0)
+    const cam = map.cameraForBounds([[w, s], [e, n]], { padding: routePadding(), maxZoom: 17 })
+    if (cam) map.easeTo({ center: cam.center, zoom: cam.zoom, bearing: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } })
+  }, [fitTo, ready])
+
+  useEffect(() => {
+    if (!flyTo) return
+    // On phones the bottom sheet covers the lower part of the map, so aim above it.
+    const offset: [number, number] = window.innerWidth <= 720 ? [0, -Math.round(window.innerHeight * 0.28)] : [196, 0]
+    mapRef.current?.flyTo({ center: flyTo, zoom: Math.max(mapRef.current.getZoom(), 15), offset })
   }, [flyTo])
 
   return <div ref={container} className="map" aria-label="Map" />

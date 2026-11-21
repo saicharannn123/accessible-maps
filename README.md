@@ -1,11 +1,12 @@
-# Accessible Maps
+# BM Locator
 
-A walking map built for the people Google Maps and Apple Maps leave out: wheelchair users, parents with strollers, older people, and anyone walking at night.
+A map website for finding what's near you (restaurants, coffee, malls, shops, gas, groceries, pharmacies, ATMs, hotels, parking and more), plus a walking map built for the people Google Maps and Apple Maps leave out: wheelchair users, parents with strollers, older people, and anyone walking at night.
 
 This is the first prototype (version 1). It runs in any browser, including on phones.
 
 ## What it does
 
+- **Near me.** Opens on your location (or the pilot city if location is off). Tap one of 20 everyday categories, like the quick buttons in Google Maps and Apple Maps: Restaurants, Coffee, Takeout, Groceries, Malls, Shopping, Gas, EV charging, Pharmacies, Hospitals, ATMs & banks, Hotels, Parking, Bars, Parks, Gyms, Transit, Restrooms, Things to do and Post office. Results are listed nearest first and pinned on the map, with address, phone, website, wheelchair access and whether it's **open now** (worked out from the hours listed in OpenStreetMap, e.g. "Open · Closes 10 PM"). Tick **Open now** to hide closed places, or search any address or city to look around there. Choose a distance (500 m to 5 km), filter to accessible places only, or pan the map and tap **Search this area**. **Directions** sends the place to the step-free route planner.
 - **Step-free routes.** Pick a start and a destination, choose a mobility profile (wheelchair, stroller, cane or walker, night walking), and get a route that avoids steps and steep slopes.
 - **Warnings along the route.** Steps, raised curbs, problems other people reported, and (for night walking) streets mapped as unlit.
 - **Accessible restrooms.** Shown on the map with wheelchair access, fee and changing-table details, plus the nearest accessible restroom to your destination.
@@ -38,6 +39,16 @@ Without a key, the app uses plain walking directions and warns you about steps i
 
 Edit `PILOT_CITY` in `src/config.ts`. It is set to Seattle as a placeholder because its sidewalk data in OpenStreetMap is good.
 
+## Put it online (free, GitHub Pages)
+
+The workflow in `.github/workflows/deploy-pages.yml` publishes the site every time `main` changes.
+
+1. One time only: open the repo's **Settings → Pages** and set **Source** to **GitHub Actions**.
+2. Merge to `main` (or run the "Deploy to GitHub Pages" workflow from the Actions tab).
+3. The site goes live at https://saicharannn123.github.io/accessible-maps/
+
+Your browser will ask to share your location the first time, which is what makes "Near me" work. Location only works on https sites, which GitHub Pages is.
+
 ## Other commands
 
 | Command | What it does |
@@ -54,7 +65,7 @@ Edit `PILOT_CITY` in `src/config.ts`. It is set to Seattle as a placeholder beca
 | Map | MapLibre GL JS with free OpenFreeMap tiles |
 | Search | Photon (OpenStreetMap geocoder) |
 | Step-free routing | OpenRouteService wheelchair profile (with a free key), else OSRM walking directions |
-| Restrooms, lighting, steps | OpenStreetMap via the Overpass API |
+| Nearby places, restrooms, lighting, steps | OpenStreetMap via the Overpass API (with a backup server) |
 | Problem reports | Saved in your browser for now |
 
 ## Known limits of version 1
