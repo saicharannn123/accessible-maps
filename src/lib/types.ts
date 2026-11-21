@@ -55,4 +55,7 @@ export interface RouteResult {
 export interface Settings {
   profile: MobilityProfile
   maxInclinePercent: number
+  /** Whose view of country borders to show: 'auto' (from your region), 'osm' (as on the ground) or a country code. */
+  worldview: import('./worldview').WorldviewSetting
+  mapStyle: import('../config').MapStyleId
 }

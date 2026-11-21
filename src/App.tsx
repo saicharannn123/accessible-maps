@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MapView, type Layers } from './components/MapView'
 import { SearchBox } from './components/SearchBox'
-import { APP_NAME, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS } from './config'
+import { APP_NAME, MAP_STYLES, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS, type MapStyleId } from './config'
+import { browserWorldview, WORLDVIEWS, type WorldviewCode, type WorldviewSetting } from './lib/worldview'
 import { bboxOf, distanceMeters, formatDistance, formatDuration } from './lib/geo'
 import { fetchAccessData, type AccessData } from './lib/overpass'
 import { openStatus } from './lib/hours'
@@ -67,6 +68,16 @@ export default function App() {
   // "Search this area" only appears after the visitor drags the map themselves.
   const [userPanned, setUserPanned] = useState(false)
   const [settings, setSettings] = useState<Settings>(loadSettings)
+  // Borders: ?borders=IN in the address forces a view (handy for testing), otherwise the setting.
+  const [autoWorldview] = useState(browserWorldview)
+  const [urlWorldview] = useState(() => {
+    const v = new URLSearchParams(window.location.search).get('borders')?.toUpperCase()
+    return v && v in WORLDVIEWS ? (v as WorldviewCode) : v === 'OSM' ? ('osm' as const) : null
+  })
+  const worldviewSetting: WorldviewSetting = urlWorldview ?? settings.worldview
+  const worldview: WorldviewCode | null =
+    worldviewSetting === 'osm' ? null : worldviewSetting === 'auto' ? autoWorldview : worldviewSetting
+
   const [reports, setReports] = useState<Report[]>(() => loadReports())
   const [access, setAccess] = useState<AccessData | null>(null)
   const [detailNotice, setDetailNotice] = useState<string | null>(null)
@@ -261,6 +272,8 @@ export default function App() {
         selectedPlaceId={selectedId}
         myLocation={myLocation}
         myAccuracy={loc.accuracy}
+        worldview={worldview}
+        mapStyle={settings.mapStyle}
         follow={follow && loc.status === 'live'}
         onUserMove={() => { setFollow(false); setUserPanned(true) }}
         fitTo={fitTo}
@@ -316,7 +329,7 @@ export default function App() {
         <nav className="tabs" role="tablist">
           {(['nearby', 'route', 'report', 'settings'] as const).map((t) => (
             <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => { setTab(t); setPick(null) }}>
-              {{ nearby: 'Near me', route: 'Directions', report: 'Report', settings: 'Profile' }[t]}
+              {{ nearby: 'Near me', route: 'Directions', report: 'Report', settings: 'Settings' }[t]}
             </button>
           ))}
         </nav>
@@ -523,6 +536,28 @@ export default function App() {
 
         {tab === 'settings' && (
           <section>
+            <div className="field">
+              <span>Map look</span>
+              <div className="seg" role="radiogroup" aria-label="Map look">
+                {(Object.keys(MAP_STYLES) as MapStyleId[]).map((id) => (
+                  <button key={id} type="button" role="radio" aria-checked={settings.mapStyle === id}
+                    className={settings.mapStyle === id ? 'active' : ''}
+                    onClick={() => setSettings({ ...settings, mapStyle: id })}>{MAP_STYLES[id].label}</button>
+                ))}
+              </div>
+            </div>
+            <label className="field">
+              <span>Country borders</span>
+              <select value={worldviewSetting} disabled={urlWorldview != null}
+                onChange={(e) => setSettings({ ...settings, worldview: e.target.value as WorldviewSetting })}>
+                <option value="auto">Automatic{autoWorldview ? ` (as shown in ${WORLDVIEWS[autoWorldview]})` : ' (as on the ground)'}</option>
+                <option value="osm">As on the ground (OpenStreetMap)</option>
+                {(Object.entries(WORLDVIEWS) as [WorldviewCode, string][])
+                  .sort((a, b) => a[1].localeCompare(b[1]))
+                  .map(([code, name]) => <option key={code} value={code}>As shown in {name}</option>)}
+              </select>
+            </label>
+            <p className="muted small">Some borders are disputed. Like Google Maps and Apple Maps, {APP_NAME} can show them the way a country officially does. Automatic follows your region.</p>
             <label className="field">
               <span>Mobility profile</span>
               <select value={settings.profile} onChange={(e) => setProfile(e.target.value as MobilityProfile)}>

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
-import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl'
+import type { ExpressionSpecification, GeoJSONSource, Map as MlMap, StyleSpecification } from 'maplibre-gl'
 import type { Feature, FeatureCollection } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
 // MapLibre runs map work in a web worker; bundlers need to be told where its file lives.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
-import { MAP_STYLE_URL, PILOT_CITY } from '../config'
+import { MAP_STYLES, PILOT_CITY, type MapStyleId } from '../config'
+import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
 import type { AccessData } from '../lib/overpass'
 import { CATEGORY_BY_ID, type NearbyPlace } from '../lib/places'
@@ -36,6 +37,9 @@ interface Props {
   follow: boolean
   /** The visitor dragged or zoomed the map themselves. */
   onUserMove: () => void
+  /** Show country borders as this country officially sees them; null = as on the ground (OpenStreetMap). */
+  worldview: WorldviewCode | null
+  mapStyle: MapStyleId
   /** Points the camera should frame, e.g. a list of nearby results. */
   fitTo: { points: LngLat[]; key: number } | null
   onPlaceClick: (id: string) => void
@@ -74,7 +78,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove } = props
+  const { access, reports, route, from, to, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, mapStyle } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -93,7 +97,7 @@ export function MapView(props: Props) {
     if (!container.current) return
     const map = new maplibregl.Map({
       container: container.current,
-      style: MAP_STYLE_URL,
+      style: MAP_STYLES[mapStyle].url,
       center: PILOT_CITY.center,
       zoom: PILOT_CITY.zoom,
     })
@@ -198,7 +202,30 @@ export function MapView(props: Props) {
     map.on('dragstart', (e) => { if (e.originalEvent) userMoveRef.current() })
 
     return () => { map.remove(); mapRef.current = null }
+    // The map is created once; style and borders are changed in place by the effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Country borders. Base styles draw OpenStreetMap's borders (boundary_2 / boundary_disputed).
+  // For a country's worldview we hide those and draw Natural Earth's lines as that country sees them.
+  const worldviewRef = useRef(worldview)
+  useEffect(() => {
+    worldviewRef.current = worldview
+    const map = mapRef.current
+    if (ready && map) applyBorders(map, worldview)
+  }, [worldview, ready])
+
+  // Switch the base map look, carrying our own layers (places, route, borders...) across.
+  const styleRef = useRef(mapStyle)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map || styleRef.current === mapStyle) return
+    styleRef.current = mapStyle
+    map.setStyle(MAP_STYLES[mapStyle].url, {
+      transformStyle: (prev, next) => carryOverAppLayers(prev, next),
+    })
+    map.once('style.load', () => applyBorders(map, worldviewRef.current))
+  }, [mapStyle, ready])
 
   const setData = (id: string, data: FC) => {
     const src = mapRef.current?.getSource(id) as GeoJSONSource | undefined
@@ -307,4 +334,56 @@ export function MapView(props: Props) {
   }, [flyTo])
 
   return <div ref={container} className="map" aria-label="Map" />
+}
+
+const BASE_BORDER_LAYERS = ['boundary_2', 'boundary_disputed']
+const WV_SOURCE = 'ne-borders'
+const WV_LAYERS = ['wv-dashed', 'wv-solid']
+
+function firstSymbolLayerId(map: MlMap): string | undefined {
+  return map.getStyle().layers.find((l) => l.type === 'symbol')?.id
+}
+
+function applyBorders(map: MlMap, worldview: WorldviewCode | null) {
+  for (const id of BASE_BORDER_LAYERS) {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', worldview ? 'none' : 'visible')
+  }
+  if (!worldview) {
+    for (const id of WV_LAYERS) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none')
+    return
+  }
+  if (!map.getSource(WV_SOURCE)) map.addSource(WV_SOURCE, { type: 'geojson', data: NE_BORDERS_URL, attribution: 'Borders: Natural Earth' })
+  const width: ExpressionSpecification = ['interpolate', ['linear'], ['zoom'], 2, 0.8, 5, 1.4, 10, 2.4, 14, 3]
+  const color = 'hsl(250, 8%, 42%)'
+  const before = firstSymbolLayerId(map) // keep place names on top of the lines
+  if (!map.getLayer('wv-dashed')) {
+    map.addLayer({ id: 'wv-dashed', type: 'line', source: WV_SOURCE,
+      layout: { 'line-join': 'round' },
+      paint: { 'line-color': color, 'line-width': width, 'line-dasharray': [2, 2] } }, before)
+  }
+  if (!map.getLayer('wv-solid')) {
+    map.addLayer({ id: 'wv-solid', type: 'line', source: WV_SOURCE,
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': color, 'line-width': width } }, before)
+  }
+  map.setFilter('wv-dashed', dashedFilter(worldview) as never)
+  map.setFilter('wv-solid', solidFilter(worldview) as never)
+  for (const id of WV_LAYERS) map.setLayoutProperty(id, 'visibility', 'visible')
+}
+
+const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'places', 'me', WV_SOURCE]
+
+/** Keep our sources and layers when the base style changes: borders under labels, the rest on top. */
+function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification {
+  if (!prev) return next
+  const sources = { ...next.sources }
+  for (const id of APP_SOURCES) if (prev.sources[id]) sources[id] = prev.sources[id]
+  const ours = prev.layers.filter((l) => 'source' in l && APP_SOURCES.includes(l.source as string))
+  const borders = ours.filter((l) => WV_LAYERS.includes(l.id))
+  const rest = ours.filter((l) => !WV_LAYERS.includes(l.id))
+  const firstSymbol = next.layers.findIndex((l) => l.type === 'symbol')
+  const layers = firstSymbol < 0
+    ? [...next.layers, ...borders, ...rest]
+    : [...next.layers.slice(0, firstSymbol), ...borders, ...next.layers.slice(firstSymbol), ...rest]
+  return { ...next, sources, layers }
 }
