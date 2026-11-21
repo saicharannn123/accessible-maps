@@ -11,11 +11,12 @@ import { CATEGORIES, CATEGORY_BY_ID, fetchNearby, type NearbyPlace } from './lib
 import { loadReports, saveReports, timeAgo } from './lib/reports'
 import { planRoute } from './lib/routing'
 import { loadSettings, saveSettings } from './lib/settings'
-import { PROFILE_LABELS, REPORT_LABELS } from './lib/types'
-import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, Settings } from './lib/types'
+import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
+import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, Settings, TravelMode } from './lib/types'
 
 type Tab = 'nearby' | 'route' | 'report' | 'settings'
-type Pick = 'from' | 'to' | 'report' | null
+type Pick = 'from' | 'to' | 'report' | `stop-${number}` | null
+const MAX_STOPS = 5
 
 const MIN_DETAIL_ZOOM = 14
 const RADII = [500, 1000, 2000, 5000, 10000, 25000]
@@ -84,6 +85,9 @@ export default function App() {
   const [layers, setLayers] = useState<Layers>({ restrooms: true, lighting: false, reports: true, obstacles: true })
   const [from, setFrom] = useState<Place | null>(null)
   const [to, setTo] = useState<Place | null>(null)
+  // Stops between start and destination. Each has an id so its search box keeps its text.
+  const [stops, setStops] = useState<{ id: number; place: Place | null }[]>([])
+  const nextStopId = useRef(1)
   const [pick, setPick] = useState<Pick>(null)
   const [routeState, setRouteState] = useState<{ key: string; route: RouteResult | null; error: string | null }>({ key: '', route: null, error: null })
   const [routing, setRouting] = useState(false)
@@ -214,6 +218,10 @@ export default function App() {
   const onMapClick = useCallback((c: LngLat) => {
     if (pick === 'from') setFrom(pinnedPlace(c))
     else if (pick === 'to') setTo(pinnedPlace(c))
+    else if (pick?.startsWith('stop-')) {
+      const id = Number(pick.slice(5))
+      setStops((ss) => ss.map((st) => (st.id === id ? { ...st, place: pinnedPlace(c) } : st)))
+    }
     else if (pick === 'report' || tab === 'report') setDraft((d) => ({ ...d, coords: c }))
     else return
     setPick(null)
@@ -225,6 +233,21 @@ export default function App() {
     if (loc.status !== 'live') loc.start()
   }
   const fromPlace: Place | null = from ?? (myLocation ? pinnedPlace(myLocation, 'My location') : null)
+  const stopPlaces = stops.flatMap((st) => (st.place ? [st.place] : []))
+
+  const addStop = () => {
+    if (stops.length >= MAX_STOPS) return
+    setStops((ss) => [...ss, { id: nextStopId.current++, place: null }])
+  }
+  const setStop = (id: number, place: Place | null) => setStops((ss) => ss.map((st) => (st.id === id ? { ...st, place } : st)))
+  const removeStop = (id: number) => setStops((ss) => ss.filter((st) => st.id !== id))
+  // Reverse the whole trip. Starting from your live location means the trip now ends there.
+  const swapTrip = () => {
+    setFrom(to)
+    setTo(fromPlace)
+    setStops((ss) => [...ss].reverse())
+  }
+  const setTravelMode = (travelMode: TravelMode) => setSettings((s) => ({ ...s, travelMode }))
 
   const loadRouteAccess = useCallback(async (line: LngLat[]) => {
     const [w, s, e, n] = bboxOf(line)
@@ -235,7 +258,8 @@ export default function App() {
   }, [])
 
   // A route belongs to one trip; changing the start, end or profile hides the old one.
-  const tripKey = JSON.stringify([from ? from.coords : myLocation ? 'me' : null, to?.coords, settings.profile, settings.maxInclinePercent])
+  const tripKey = JSON.stringify([from ? from.coords : myLocation ? 'me' : null, stopPlaces.map((p) => p.coords), to?.coords,
+    settings.travelMode, settings.profile, settings.maxInclinePercent])
   const route = routeState.key === tripKey ? routeState.route : null
   const routeError = routeState.key === tripKey ? routeState.error : null
 
@@ -244,7 +268,8 @@ export default function App() {
     const key = tripKey
     setRouting(true); setRouteState({ key, route: null, error: null })
     try {
-      setRouteState({ key, route: await planRoute(fromPlace.coords, to.coords, settings, loadRouteAccess, reports), error: null })
+      const points = [fromPlace.coords, ...stopPlaces.map((p) => p.coords), to.coords]
+      setRouteState({ key, route: await planRoute(points, settings, loadRouteAccess, reports), error: null })
     } catch (e) {
       setRouteState({ key, route: null, error: e instanceof Error ? e.message : 'Routing failed' })
     } finally {
@@ -270,7 +295,12 @@ export default function App() {
     setDraft({ coords: null, type: draft.type, note: '' })
   }
 
-  const pickHint = pick === 'from' ? 'Tap the map to set your start' : pick === 'to' ? 'Tap the map to set your destination' : null
+  const pickHint = pick === 'from' ? 'Tap the map to set your start' : pick === 'to' ? 'Tap the map to set your destination'
+    : pick?.startsWith('stop-') ? 'Tap the map to set this stop' : null
+
+  const routeStops = useMemo(() => stops.flatMap((st) => (st.place ? [st.place.coords] : [])), [stops])
+  const mode = settings.travelMode
+  const arrival = route ? new Date(now.getTime() + route.durationSeconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null
 
   return (
     <div className="app">
@@ -280,6 +310,7 @@ export default function App() {
         route={route}
         from={from?.coords ?? null}
         to={to?.coords ?? null}
+        stops={routeStops}
         layers={layers}
         flyTo={flyTo}
         places={tab === 'nearby' ? shownPlaces : selected ? [selected] : []}
@@ -342,7 +373,11 @@ export default function App() {
 
         <nav className="tabs" role="tablist">
           {(['nearby', 'route', 'report', 'settings'] as const).map((t) => (
-            <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => { setTab(t); setPick(null) }}>
+            <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => {
+              setTab(t); setPick(null)
+              // Directions start from where you are, so ask for location as soon as they're opened.
+              if (t === 'route' && (loc.status === 'prompt' || loc.status === 'unavailable')) loc.start()
+            }}>
               {{ nearby: 'Near me', route: 'Directions', report: 'Report', settings: 'Settings' }[t]}
             </button>
           ))}
@@ -456,33 +491,81 @@ export default function App() {
 
         {tab === 'route' && (
           <section>
-            <SearchBox label="From" placeholder={loc.status === 'asking' ? 'Finding your location…' : 'Search a start point'} value={fromPlace}
-              onSelect={(p) => { setFrom(p); if (p) setFlyTo(p.coords) }}
-              extraOptions={[{ label: 'Use my location', onPick: useMyLocation }, { label: 'Pick on map', onPick: () => setPick('from') }]} />
-            <SearchBox label="To" placeholder="Search a destination" value={to}
-              onSelect={(p) => { setTo(p); if (p) setFlyTo(p.coords) }}
-              extraOptions={[{ label: 'Pick on map', onPick: () => setPick('to') }]} />
-
-            <div className="profile-row">
-              <span>Route for</span>
-              <select value={settings.profile} onChange={(e) => setProfile(e.target.value as MobilityProfile)}>
-                {Object.entries(PROFILE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
+            <div className="modes" role="radiogroup" aria-label="Travel mode">
+              {(Object.keys(TRAVEL_MODES) as TravelMode[]).map((m) => (
+                <button key={m} type="button" role="radio" aria-checked={mode === m} className={mode === m ? 'active' : ''}
+                  onClick={() => setTravelMode(m)}>
+                  <span aria-hidden="true">{TRAVEL_MODES[m].icon}</span>{TRAVEL_MODES[m].label}
+                </button>
+              ))}
             </div>
 
+            <div className="trip">
+              <ol className="trip-points">
+                <li>
+                  <span className="trip-dot start" aria-hidden="true" />
+                  <SearchBox label="Start" hideLabel value={fromPlace}
+                    placeholder={loc.status === 'asking' ? 'Finding your location…' : 'Choose a starting point'}
+                    onSelect={(p) => { setFrom(p); if (p) setFlyTo(p.coords) }}
+                    extraOptions={[{ label: 'Use my location', onPick: useMyLocation }, { label: 'Pick on map', onPick: () => setPick('from') }]} />
+                </li>
+                {stops.map((st, i) => (
+                  <li key={st.id}>
+                    <span className="trip-dot stop" aria-hidden="true">{i + 1}</span>
+                    <SearchBox label={`Stop ${i + 1}`} hideLabel value={st.place} placeholder={`Add stop ${i + 1}`}
+                      near={fromPlace?.coords}
+                      onSelect={(p) => { setStop(st.id, p); if (p) setFlyTo(p.coords) }}
+                      extraOptions={[{ label: 'Pick on map', onPick: () => setPick(`stop-${st.id}`) }]} />
+                    <button type="button" className="icon-btn" aria-label={`Remove stop ${i + 1}`} onClick={() => removeStop(st.id)}>✕</button>
+                  </li>
+                ))}
+                <li>
+                  <span className="trip-dot end" aria-hidden="true" />
+                  <SearchBox label="Destination" hideLabel value={to} placeholder="Choose a destination"
+                    near={fromPlace?.coords}
+                    onSelect={(p) => { setTo(p); if (p) setFlyTo(p.coords) }}
+                    extraOptions={[{ label: 'Pick on map', onPick: () => setPick('to') }]} />
+                </li>
+              </ol>
+              <button type="button" className="icon-btn swap" aria-label="Swap start and destination" title="Swap start and destination"
+                disabled={!fromPlace && !to} onClick={swapTrip}>⇅</button>
+            </div>
+
+            <div className="trip-actions">
+              <button type="button" className="chip" disabled={stops.length >= MAX_STOPS} onClick={addStop}>＋ Add stop</button>
+              {(from !== null || loc.status !== 'live') && (
+                <button type="button" className="chip loc" onClick={useMyLocation}>
+                  <span aria-hidden="true">◎</span> {loc.status === 'asking' ? 'Finding your location…' : 'Use my live location'}
+                </button>
+              )}
+            </div>
+            {from === null && loc.status === 'live' && <p className="muted small">Starting from your live location.</p>}
+
+            {mode === 'accessible' && (
+              <div className="profile-row">
+                <span>Route for</span>
+                <select value={settings.profile} onChange={(e) => setProfile(e.target.value as MobilityProfile)}>
+                  {Object.entries(PROFILE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+            )}
+
             <button type="button" className="primary" disabled={!fromPlace || !to || routing} onClick={findRoute}>
-              {routing ? 'Finding a route…' : 'Find step-free route'}
+              {routing ? 'Finding a route…' : mode === 'accessible' ? 'Find step-free route' : 'Get directions'}
             </button>
             {routeError && <p className="error" role="alert">{routeError}</p>}
 
             {route && (
               <div className="route-summary">
-                <p className="big">{formatDuration(route.durationSeconds)} · {formatDistance(route.distanceMeters)}</p>
-                <p className={route.stepFreeVerified ? 'ok' : 'warn'}>
-                  {route.stepFreeVerified ? 'Avoids steps' : 'Not verified step-free'}
-                </p>
+                <p className="big"><span aria-hidden="true">{TRAVEL_MODES[mode].icon}</span> {formatDuration(route.durationSeconds)} · {formatDistance(route.distanceMeters)}</p>
+                <p className="muted">Arrive around {arrival}{stopPlaces.length > 0 ? ` · ${stopPlaces.length} stop${stopPlaces.length > 1 ? 's' : ''}` : ''}</p>
+                {mode === 'accessible' && (
+                  <p className={route.stepFreeVerified ? 'ok' : 'warn'}>
+                    {route.stepFreeVerified ? 'Avoids steps' : 'Not verified step-free'}
+                  </p>
+                )}
                 {route.warnings.length === 0 ? (
-                  <p className="ok">No problems reported along this route.</p>
+                  mode !== 'car' && mode !== 'bike' && <p className="ok">No problems reported along this route.</p>
                 ) : (
                   <ul className="warnings">
                     {route.warnings.map((w, i) => (

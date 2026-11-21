@@ -180,3 +180,28 @@ section h2 { font-size: 1rem; margin: 8px 0 0; }
 .seg { display: flex; gap: 4px; background: #f3f4f6; padding: 4px; border-radius: 10px; }
 .seg button { flex: 1; border: 0; background: transparent; padding: 8px; border-radius: 8px; color: #374151; min-height: 40px; }
 .seg button.active { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15); font-weight: 600; color: #111827; }
+
+/* Directions: travel modes, start / stops / destination, swap. */
+.modes { display: flex; gap: 6px; flex-wrap: wrap; }
+.modes button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; border: 1px solid #e5e7eb; background: #fff;
+  border-radius: 12px; padding: 6px 4px; font-size: .78rem; color: #374151; min-height: 48px; min-width: 64px; }
+.modes button span { font-size: 1.2rem; line-height: 1; }
+.modes button.active { background: #e8f0fe; border-color: #1a5fd6; color: #1a5fd6; font-weight: 600; }
+.trip { display: flex; align-items: center; gap: 6px; }
+.trip-points { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.trip-points li { display: flex; align-items: center; gap: 8px; position: relative; }
+.trip-points li .search { flex: 1; min-width: 0; }
+.trip-points li + li::before { content: ''; position: absolute; left: 6px; top: -14px; height: 16px; border-left: 2px dotted #9ca3af; }
+.trip-dot { flex: none; width: 14px; height: 14px; border-radius: 50%; display: grid; place-items: center; font-size: .6rem; font-weight: 700; color: #fff; }
+.trip-dot.start { border: 3px solid #15803d; background: #fff; }
+.trip-dot.stop { background: #f59e0b; width: 16px; height: 16px; margin-left: -1px; }
+.trip-dot.end { background: #dc2626; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); }
+.icon-btn { flex: none; border: 0; background: transparent; width: 40px; height: 40px; border-radius: 50%; font-size: 1.1rem; color: #374151; cursor: pointer; }
+.icon-btn:hover:not(:disabled) { background: #f3f4f6; }
+.icon-btn:disabled { opacity: .4; cursor: default; }
+.icon-btn.swap { font-size: 1.4rem; }
+.trip-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; padding: 8px 14px; font-weight: 600; color: #1f2937; min-height: 40px; cursor: pointer; }
+.chip:disabled { opacity: .5; cursor: default; }
+.chip.loc { background: #e0f2fe; border-color: #bae6fd; color: #075985; }
+.trip-points li:not(:has(.icon-btn))::after { content: ''; flex: none; width: 40px; }

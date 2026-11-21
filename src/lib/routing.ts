@@ -1,8 +1,8 @@
-import { FALLBACK_FOOT_ROUTER_URL, ORS_KEY, ORS_URL } from '../config'
+import { ORS_KEY, ORS_URL, OSRM_URLS } from '../config'
 import { distanceToLine, formatDistance } from './geo'
 import type { AccessData } from './overpass'
 import { REPORT_LABELS } from './types'
-import type { LngLat, Report, RouteResult, RouteWarning, Settings } from './types'
+import type { LngLat, Report, RouteResult, RouteWarning, Settings, TravelMode } from './types'
 import { timeAgo } from './reports'
 
 interface BaseRoute {
@@ -18,8 +18,7 @@ function orsIncline(percent: number): number {
 }
 
 /** Build the OpenRouteService request for a mobility profile. Exported for tests. */
-export function orsRequest(from: LngLat, to: LngLat, settings: Settings) {
-  const coordinates = [from, to]
+export function orsRequest(coordinates: LngLat[], settings: Settings) {
   switch (settings.profile) {
     case 'wheelchair':
       return {
@@ -61,8 +60,8 @@ export function orsRequest(from: LngLat, to: LngLat, settings: Settings) {
   }
 }
 
-async function routeWithOrs(from: LngLat, to: LngLat, settings: Settings, key: string): Promise<BaseRoute> {
-  const { profile, body } = orsRequest(from, to, settings)
+async function routeWithOrs(points: LngLat[], settings: Settings, key: string): Promise<BaseRoute> {
+  const { profile, body } = orsRequest(points, settings)
   const res = await fetch(`${ORS_URL}/${profile}/geojson`, {
     method: 'POST',
     headers: { Authorization: key, 'Content-Type': 'application/json' },
@@ -85,18 +84,29 @@ async function routeWithOrs(from: LngLat, to: LngLat, settings: Settings, key: s
   }
 }
 
-async function routeWithFallback(from: LngLat, to: LngLat): Promise<BaseRoute> {
-  const url = `${FALLBACK_FOOT_ROUTER_URL}/${from.join(',')};${to.join(',')}?overview=full&geometries=geojson`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Routing failed (${res.status})`)
+/** Average speeds for on-foot modes; OSRM's foot profile assumes a brisk walk. */
+const WALK_SPEED = 1.3 // m/s, about 4.7 km/h
+const ACCESSIBLE_SPEED = 1.0 // m/s, a relaxed pace of about 3.6 km/h
+
+/** Build the free OSRM request URL for a mode. Exported for tests. */
+export function osrmUrl(mode: TravelMode, points: LngLat[]): string {
+  const base = mode === 'car' ? OSRM_URLS.car : mode === 'bike' ? OSRM_URLS.bike : OSRM_URLS.foot
+  const coords = points.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(';')
+  return `${base}/${coords}?overview=full&geometries=geojson`
+}
+
+async function routeWithOsrm(mode: TravelMode, points: LngLat[]): Promise<BaseRoute> {
+  const res = await fetch(osrmUrl(mode, points))
+  if (!res.ok) throw new Error(res.status === 429 ? 'The free route server is busy. Try again in a moment.' : `Routing failed (${res.status})`)
   const data = await res.json()
-  if (!data.routes?.length) throw new Error('No walking route found between these points.')
+  const what = mode === 'car' ? 'driving' : mode === 'bike' ? 'cycling' : 'walking'
+  if (!data.routes?.length) throw new Error(`No ${what} route found between these points.`)
   const r = data.routes[0]
+  const walking = mode === 'walk' || mode === 'accessible'
   return {
     geometry: r.geometry.coordinates,
     distanceMeters: r.distance,
-    // OSRM foot speeds assume brisk walking; slow it to a relaxed, accessible pace (~3.6 km/h).
-    durationSeconds: r.distance / 1.0,
+    durationSeconds: walking ? r.distance / (mode === 'walk' ? WALK_SPEED : ACCESSIBLE_SPEED) : r.duration,
     stepFreeVerified: false,
   }
 }
@@ -111,8 +121,12 @@ export function findWarnings(
 ): RouteWarning[] {
   const warnings: RouteWarning[] = []
   const line = route.geometry
+  // Steps, curbs and sidewalk reports only matter on foot; plain walking just isn't promised step-free.
+  const mode = settings.travelMode
+  if (mode === 'car' || mode === 'bike') return warnings
+  const accessible = mode === 'accessible'
 
-  if (!route.stepFreeVerified && settings.profile !== 'night') {
+  if (accessible && !route.stepFreeVerified && settings.profile !== 'night') {
     warnings.push({
       kind: 'not-verified',
       message:
@@ -133,7 +147,7 @@ export function findWarnings(
       }
     }
 
-    if (settings.profile === 'night') {
+    if (accessible && settings.profile === 'night') {
       let unlitMeters = 0
       let firstUnlit: LngLat | undefined
       for (const w of access.lighting) {
@@ -166,14 +180,18 @@ export function findWarnings(
   return warnings
 }
 
+/** Plan a trip through all points in order: start, any stops, destination. */
 export async function planRoute(
-  from: LngLat,
-  to: LngLat,
+  points: LngLat[],
   settings: Settings,
   loadAccess: (route: LngLat[]) => Promise<AccessData | null>,
   reports: Report[],
 ): Promise<RouteResult> {
-  const base = ORS_KEY ? await routeWithOrs(from, to, settings, ORS_KEY) : await routeWithFallback(from, to)
-  const access = await loadAccess(base.geometry).catch(() => null)
+  const mode = settings.travelMode
+  const base = mode === 'accessible' && ORS_KEY
+    ? await routeWithOrs(points, settings, ORS_KEY)
+    : await routeWithOsrm(mode, points)
+  const onFoot = mode === 'walk' || mode === 'accessible'
+  const access = onFoot ? await loadAccess(base.geometry).catch(() => null) : null
   return { ...base, warnings: findWarnings(base, settings, access, reports) }
 }

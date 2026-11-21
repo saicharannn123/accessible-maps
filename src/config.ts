@@ -48,5 +48,12 @@ export const ORS_URL = 'https://api.openrouteservice.org/v2/directions'
 export const FALLBACK_FOOT_ROUTER_URL =
   'https://routing.openstreetmap.de/routed-foot/route/v1/foot'
 
+// Free, keyless OSRM servers (FOSSGIS, OpenStreetMap data) for walking, cycling and driving.
+export const OSRM_URLS = {
+  foot: FALLBACK_FOOT_ROUTER_URL,
+  bike: 'https://routing.openstreetmap.de/routed-bike/route/v1/bike',
+  car: 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
+} as const
+
 // How long a user report stays on the map before it needs re-confirming.
 export const REPORT_LIFETIME_DAYS = 7
