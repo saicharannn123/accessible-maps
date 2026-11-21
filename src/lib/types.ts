@@ -9,6 +9,16 @@ export const PROFILE_LABELS: Record<MobilityProfile, string> = {
   night: 'Night walking',
 }
 
+/** How you're getting there. "accessible" uses the mobility profile (step-free where possible). */
+export type TravelMode = 'walk' | 'accessible' | 'bike' | 'car'
+
+export const TRAVEL_MODES: Record<TravelMode, { label: string; icon: string }> = {
+  car: { label: 'Drive', icon: '🚗' },
+  walk: { label: 'Walk', icon: '🚶' },
+  accessible: { label: 'Step-free', icon: '♿' },
+  bike: { label: 'Bike', icon: '🚲' },
+}
+
 export interface Place {
   name: string
   detail: string
@@ -59,4 +69,6 @@ export interface Settings {
   worldview: import('./worldview').WorldviewSetting
   /** Base map look. Renamed from mapStyle so everyone moves to the new Clean default once. */
   mapLook: import('../config').MapStyleId
+  /** Travel mode for directions, remembered between visits. */
+  travelMode: TravelMode
 }

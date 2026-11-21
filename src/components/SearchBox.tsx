@@ -10,9 +10,11 @@ interface Props {
   extraOptions?: { label: string; onPick: () => void }[]
   /** Prefer results near this point. */
   near?: [number, number]
+  /** Keep the label for screen readers only. */
+  hideLabel?: boolean
 }
 
-export function SearchBox({ label, placeholder, value, onSelect, extraOptions = [], near }: Props) {
+export function SearchBox({ label, placeholder, value, onSelect, extraOptions = [], near, hideLabel }: Props) {
   const [text, setText] = useState(value?.name ?? '')
   const [results, setResults] = useState<Place[]>([])
   const [open, setOpen] = useState(false)
@@ -43,7 +45,7 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
   return (
     <div className="search">
       <label>
-        {label ? <span className="search-label">{label}</span> : <span className="sr-only">Search</span>}
+        {label ? <span className={hideLabel ? 'sr-only' : 'search-label'}>{label}</span> : <span className="sr-only">Search</span>}
         <input
           type="search"
           value={text}

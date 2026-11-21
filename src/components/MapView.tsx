@@ -29,6 +29,8 @@ interface Props {
   route: RouteResult | null
   from: LngLat | null
   to: LngLat | null
+  /** Stops along the way, in order. */
+  stops: LngLat[]
   layers: Layers
   flyTo: LngLat | null
   places: NearbyPlace[]
@@ -80,7 +82,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, mapStyle } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, mapStyle } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -146,7 +148,7 @@ export function MapView(props: Props) {
         map.addLayer({ id: 'endpoints', type: 'circle', source: 'endpoints',
           paint: {
             'circle-radius': 9,
-            'circle-color': ['match', ['get', 'role'], 'from', '#15803d', '#1a5fd6'],
+            'circle-color': ['match', ['get', 'role'], 'from', '#15803d', 'stop', '#f59e0b', '#1a5fd6'],
             'circle-stroke-color': '#fff', 'circle-stroke-width': 3,
           } })
 
@@ -279,9 +281,10 @@ export function MapView(props: Props) {
     if (!ready) return
     const f: Feature[] = []
     if (from) f.push(point(from, { role: 'from' }))
+    for (const s of stops) f.push(point(s, { role: 'stop' }))
     if (to) f.push(point(to, { role: 'to' }))
     setData('endpoints', { type: 'FeatureCollection', features: f })
-  }, [from, to, ready])
+  }, [from, to, stops, ready])
 
   useEffect(() => {
     const map = mapRef.current

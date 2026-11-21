@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { distanceMeters, distanceToLine, formatDistance } from '../geo'
 import { buildQuery, parseElements } from '../overpass'
-import { findWarnings, orsRequest } from '../routing'
+import { findWarnings, orsRequest, osrmUrl } from '../routing'
 import type { LngLat, Settings } from '../types'
 
 const line: LngLat[] = [[-122.3400, 47.6000], [-122.3300, 47.6000]]
-const wheelchair: Settings = { profile: 'wheelchair', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean' }
+const wheelchair: Settings = { profile: 'wheelchair', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible' }
 
 describe('geo', () => {
   it('measures distances', () => {
@@ -36,10 +36,10 @@ describe('overpass', () => {
 
 describe('routing', () => {
   it('maps profiles to OpenRouteService options', () => {
-    const w = orsRequest([0, 0], [1, 1], { profile: 'wheelchair', maxInclinePercent: 5, worldview: 'auto', mapLook: 'clean' })
+    const w = orsRequest([[0, 0], [1, 1]], { profile: 'wheelchair', maxInclinePercent: 5, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible' })
     expect(w.profile).toBe('wheelchair')
     expect(w.body.options).toMatchObject({ profile_params: { restrictions: { maximum_incline: 6 } } })
-    expect(orsRequest([0, 0], [1, 1], { profile: 'cane', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean' }).body.options).toEqual({ avoid_features: ['steps'] })
+    expect(orsRequest([[0, 0], [1, 1]], { profile: 'cane', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible' }).body.options).toEqual({ avoid_features: ['steps'] })
   })
 
   it('warns about steps, reports and unverified routes', () => {
@@ -64,5 +64,21 @@ describe('routing', () => {
     ])
     expect(findWarnings(route, wheelchair, access, []).map((w) => w.kind)).toEqual([])
     expect(findWarnings(route, { ...wheelchair, profile: 'night' }, access, []).map((w) => w.kind)).toEqual(['unlit'])
+  })
+})
+
+describe('travel modes', () => {
+  it('routes through every stop in order with the right free server', () => {
+    const url = osrmUrl('car', [[-71.1, 42.1], [-71.2, 42.2], [-71.3, 42.3]])
+    expect(url).toContain('/routed-car/route/v1/driving/-71.100000,42.100000;-71.200000,42.200000;-71.300000,42.300000?')
+    expect(osrmUrl('bike', [[0, 0], [1, 1]])).toContain('/routed-bike/')
+    expect(osrmUrl('walk', [[0, 0], [1, 1]])).toContain('/routed-foot/')
+  })
+  it('only warns about steps and sidewalk reports on foot', () => {
+    const route = { geometry: [[0, 0], [0.001, 0]] as [number, number][], distanceMeters: 100, durationSeconds: 60, stepFreeVerified: false }
+    const report = [{ id: 'r', type: 'blocked-sidewalk' as const, note: '', coords: [0.0005, 0] as [number, number], createdAt: Date.now() }]
+    expect(findWarnings(route, { ...wheelchair, travelMode: 'car' }, null, report)).toEqual([])
+    expect(findWarnings(route, { ...wheelchair, travelMode: 'walk' }, null, report).map((w) => w.kind)).toEqual(['report'])
+    expect(findWarnings(route, wheelchair, null, report).map((w) => w.kind)).toEqual(['not-verified', 'report'])
   })
 })
