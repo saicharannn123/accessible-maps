@@ -39,9 +39,12 @@ const NAME_TIMEZONE_PREFIX: [RegExp, WorldviewCode][] = [
 
 /** Which country's place names to show automatically: the border view, or the US / Mexico. */
 export function detectNameView(timeZone?: string, languages: readonly string[] = []): WorldviewCode | null {
+  // Where you are (time zone) decides names before the languages your browser lists:
+  // someone in New Jersey with English (India) set should still see US names, like Google shows.
+  if (timeZone && TIMEZONE_COUNTRY[timeZone]) return TIMEZONE_COUNTRY[timeZone]
+  for (const [re, code] of NAME_TIMEZONE_PREFIX) if (timeZone && re.test(timeZone)) return code
   const border = detectWorldview(timeZone, languages)
   if (border) return border
-  for (const [re, code] of NAME_TIMEZONE_PREFIX) if (timeZone && re.test(timeZone)) return code
   // Many browsers everywhere say en-US, so only trust the language when there's no time zone.
   if (timeZone) return null
   for (const lang of languages) {

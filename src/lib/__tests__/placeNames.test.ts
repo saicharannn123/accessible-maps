@@ -24,5 +24,7 @@ describe('place names by country view', () => {
     expect(detectNameView('America/Mexico_City', ['es-MX'])).toBe('MX')
     expect(detectNameView('Asia/Kolkata', ['en-US'])).toBe('IN')
     expect(detectNameView('Europe/London', ['en-US'])).toBeNull()
+    // In the US with English (India) listed: US names, as Google shows by location.
+    expect(detectNameView('America/New_York', ['en-US', 'en-IN'])).toBe('US')
   })
 })
