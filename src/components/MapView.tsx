@@ -347,6 +347,9 @@ export function MapView(props: Props) {
       const el = document.createElement('div')
       el.className = `trip-pin ${role === 'from' ? 'start' : role === 'to' ? 'end' : 'stop'}`
       if (typeof role === 'number') el.textContent = String(role + 1)
+      // A drawn pin, not a rotated box: rotating the marker element would also rotate MapLibre's
+      // positioning transform and throw the pin off the map.
+      if (role === 'to') el.innerHTML = '<svg width="28" height="38" viewBox="0 0 28 38" aria-hidden="true"><path d="M14 37s12-13.2 12-22.5A12 12 0 0 0 2 14.5C2 23.8 14 37 14 37z" fill="#dc2626" stroke="#fff" stroke-width="2"/><circle cx="14" cy="14.5" r="4.5" fill="#fff"/></svg>'
       el.title = role === 'from' ? 'Start (drag to move)' : role === 'to' ? 'Destination (drag to move)' : `Stop ${role + 1} (drag to move)`
       const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: role === 'to' ? 'bottom' : 'center' })
         .setLngLat(at)
