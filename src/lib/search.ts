@@ -18,11 +18,11 @@ export interface PlaceKind {
   cuisine?: string
 }
 
-const SPORTS_PLACES = ['leisure:sports_centre', 'leisure:sports_hall', 'leisure:fitness_centre', 'shop:sports']
+const SPORTS_PLACES = ['leisure:sports_centre', 'leisure:sports_hall']
 
 const EXTRA_KINDS: PlaceKind[] = [
   { label: 'Badminton', icon: '🏸', words: ['badminton', 'badminton court', 'shuttle'], tags: SPORTS_PLACES, sport: 'badminton' },
-  { label: 'Tennis', icon: '🎾', words: ['tennis', 'tennis court'], tags: ['leisure:sports_centre', 'shop:sports'], sport: 'tennis' },
+  { label: 'Tennis', icon: '🎾', words: ['tennis', 'tennis court'], tags: ['leisure:sports_centre'], sport: 'tennis' },
   { label: 'Pickleball', icon: '🏓', words: ['pickleball'], tags: ['leisure:sports_centre'], sport: 'pickleball' },
   { label: 'Table tennis', icon: '🏓', words: ['table tennis', 'ping pong'], tags: ['leisure:sports_centre'], sport: 'table_tennis' },
   { label: 'Basketball', icon: '🏀', words: ['basketball', 'basketball court'], tags: ['leisure:sports_centre'], sport: 'basketball' },
@@ -164,7 +164,11 @@ export async function searchNearbyKind(kind: PlaceKind, center: LngLat, signal?:
   const res = await fetch(`${PHOTON_REVERSE_URL}?${params}`, { signal })
   if (!res.ok) throw new Error(`Search failed (${res.status})`)
   const features = ((await res.json()) as { features: PhotonFeature[] }).features ?? []
-  return features.filter((f) => f.properties.name).map((f) => placeFrom(f, center, kind.icon))
+  // For a sport these are sports centres that may offer it, so don't badge them as courts.
+  return features.filter((f) => f.properties.name).map((f) => {
+    const p = placeFrom(f, center, kind.sport ? '🏟️' : kind.icon)
+    return kind.sport ? { ...p, detail: `Sports centre · ${p.detail}` } : p
+  })
 }
 
 export { placeFrom as photonPlace }
