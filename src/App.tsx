@@ -17,7 +17,9 @@ type Tab = 'nearby' | 'route' | 'report' | 'settings'
 type Pick = 'from' | 'to' | 'report' | null
 
 const MIN_DETAIL_ZOOM = 14
-const RADII = [500, 1000, 2000, 5000]
+const RADII = [500, 1000, 2000, 5000, 10000, 25000]
+// Below this many results we automatically look further out, like big map apps do.
+const MIN_RESULTS = 3
 
 const WHEELCHAIR_TEXT: Record<NearbyPlace['wheelchair'], string> = {
   yes: '♿ Wheelchair accessible',
@@ -32,6 +34,8 @@ interface Nearby {
   center: LngLat | null
   places: NearbyPlace[]
   status: 'idle' | 'loading' | 'done' | 'error'
+  /** Set when nothing was close, so we looked further than asked. */
+  widenedFrom?: number
 }
 
 function pinnedPlace(c: LngLat, name = 'Dropped pin'): Place {
@@ -60,8 +64,8 @@ export default function App() {
   const nearbyCtrl = useRef<AbortController | null>(null)
   const panelScroll = useRef<HTMLDivElement>(null)
   // Where the map was after the app last moved it; "Search this area" shows once you pan away from it.
-  const [viewBase, setViewBase] = useState<LngLat | null>(null)
-  const appMoving = useRef(false)
+  // "Search this area" only appears after the visitor drags the map themselves.
+  const [userPanned, setUserPanned] = useState(false)
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [reports, setReports] = useState<Report[]>(() => loadReports())
   const [access, setAccess] = useState<AccessData | null>(null)
@@ -99,11 +103,23 @@ export default function App() {
     const ctrl = new AbortController()
     nearbyCtrl.current = ctrl
     setSelectedId(null)
+    setUserPanned(false)
     setNearby({ category, radius, center, places: [], status: 'loading' })
-    fetchNearby(cat, center, radius, ctrl.signal)
-      .then((places) => {
-        setNearby({ category, radius, center, places, status: 'done' })
-        if (places.length) appMoving.current = true
+    const run = async () => {
+      let r = radius
+      let places = await fetchNearby(cat, center, r, ctrl.signal)
+      // Nothing (or almost nothing) close by: keep looking further out instead of stopping.
+      while (places.length < MIN_RESULTS && r < RADII[RADII.length - 1]) {
+        r = RADII.find((x) => x > r) ?? RADII[RADII.length - 1]
+        const wider = await fetchNearby(cat, center, r, ctrl.signal)
+        if (wider.length >= places.length) places = wider
+      }
+      return { places, r }
+    }
+    run()
+      .then(({ places, r }) => {
+        setNearby({ category, radius: r, center, places, status: 'done', widenedFrom: r !== radius ? radius : undefined })
+        if (places.length) setFollow(false) // show the results; the locate button brings you back
         if (places.length) setFitTo({ points: [center, ...places.slice(0, 15).map((p) => p.coords)], key: Date.now() })
       })
       .catch((e) => { if (e.name !== 'AbortError') setNearby((n) => ({ ...n, status: 'error' })) })
@@ -132,8 +148,8 @@ export default function App() {
   )
   const openCount = useMemo(() => [...statusById.values()].filter((s) => s?.open).length, [statusById])
   const selected = nearby.places.find((p) => p.id === selectedId) ?? null
-  const movedAway = nearby.status === 'done' && nearby.category != null && !selected &&
-    distanceMeters(viewBase ?? nearby.center ?? mapCenter, mapCenter) > Math.max(400, nearby.radius * 0.6)
+  const movedAway = userPanned && nearby.status === 'done' && nearby.category != null && !selected &&
+    distanceMeters(nearby.center ?? mapCenter, mapCenter) > Math.max(300, Math.min(nearby.radius, 2000) * 0.5)
 
   const selectPlace = useCallback((id: string) => {
     setSelectedId(id)
@@ -154,7 +170,6 @@ export default function App() {
   const onViewChange = useCallback((bbox: [number, number, number, number], zoom: number) => {
     const c: LngLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
     setMapCenter(c)
-    if (appMoving.current) { appMoving.current = false; setViewBase(c) }
     window.clearTimeout(viewTimer.current)
     viewCtrl.current?.abort()
     if (zoom < MIN_DETAIL_ZOOM) {
@@ -247,7 +262,7 @@ export default function App() {
         myLocation={myLocation}
         myAccuracy={loc.accuracy}
         follow={follow && loc.status === 'live'}
-        onUserMove={() => setFollow(false)}
+        onUserMove={() => { setFollow(false); setUserPanned(true) }}
         fitTo={fitTo}
         onPlaceClick={selectPlace}
         onMapClick={onMapClick}
@@ -313,7 +328,6 @@ export default function App() {
               near={searchCenter}
               onSelect={(p) => {
                 if (!p) return
-                appMoving.current = true
                 setFlyTo(p.coords)
                 // A specific address becomes the new "near" point for the categories.
                 if (nearby.category) searchNearby(nearby.category, nearby.radius, p.coords)
@@ -389,11 +403,12 @@ export default function App() {
                 </p>
               ) : (
                 <>
+                  {nearby.widenedFrom && <p className="muted small">Nothing within {formatDistance(nearby.widenedFrom)}, so we looked further out.</p>}
                   <p className="muted small">{shownPlaces.length} {shownPlaces.length === 1 ? 'place' : 'places'}, nearest first{!openOnly && openCount > 0 ? ` · ${openCount} open now` : ''}</p>
                   <ul className="results">
                     {shownPlaces.map((p) => (
                       <li key={p.id}>
-                        <button type="button" onClick={() => { setSelectedId(p.id); appMoving.current = true; setFlyTo(p.coords) }}>
+                        <button type="button" onClick={() => { setSelectedId(p.id); setFollow(false); setFlyTo(p.coords) }}>
                           <span className="res-icon" style={{ background: CATEGORY_BY_ID[p.category]?.color }} aria-hidden="true">{CATEGORY_BY_ID[p.category]?.icon}</span>
                           <span className="res-text">
                             <strong>{p.name}</strong>

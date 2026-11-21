@@ -23,9 +23,29 @@ export interface LiveLocation {
   dismiss: () => void
 }
 
+/**
+ * For testing and demos: `?at=42.2626,-71.8023` pretends the visitor is at that spot
+ * (latitude,longitude), so any place can be checked from any computer.
+ */
+function simulatedPosition(): LngLat | null {
+  if (typeof window === 'undefined') return null
+  const at = new URLSearchParams(window.location.search).get('at')
+  const m = at?.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/)
+  if (!m) return null
+  const lat = Number(m[1]), lng = Number(m[2])
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lng, lat] : null
+}
+
 const WATCH_OPTIONS: PositionOptions = { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
 
 export function useLiveLocation(): LiveLocation {
+  const [simulated] = useState(simulatedPosition)
+  const real = useRealLocation(simulated == null)
+  if (simulated) return { status: 'live', position: simulated, accuracy: 20, start: () => {}, dismiss: () => {} }
+  return real
+}
+
+function useRealLocation(enabled: boolean): LiveLocation {
   const supported = typeof navigator !== 'undefined' && 'geolocation' in navigator && window.isSecureContext
   const [status, setStatus] = useState<LocationStatus>(supported ? 'checking' : 'unsupported')
   const [position, setPosition] = useState<LngLat | null>(null)
@@ -61,7 +81,7 @@ export function useLiveLocation(): LiveLocation {
   // On open: if the visitor already allowed location, start following right away.
   // If they haven't decided, show our card so they know why we ask. If blocked, say how to fix it.
   useEffect(() => {
-    if (!supported) return
+    if (!supported || !enabled) return
     let perm: PermissionStatus | null = null
     let cancelled = false
     const onChange = () => {
@@ -88,7 +108,7 @@ export function useLiveLocation(): LiveLocation {
       if (watchId.current != null) navigator.geolocation.clearWatch(watchId.current)
       watchId.current = null
     }
-  }, [supported, start])
+  }, [supported, enabled, start])
 
   return { status, position, accuracy, start, dismiss }
 }
