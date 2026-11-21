@@ -332,12 +332,14 @@ export default function App() {
   // and again whenever a pin, stop or travel mode changes.
   const autoKey = useRef('')
   const findRouteRef = useRef<() => void>(() => {})
+  const tripReady = tab === 'route' && fromPlace != null && to != null
   useEffect(() => {
-    if (tab !== 'route' || !fromPlace || !to || autoKey.current === tripKey) return
-    autoKey.current = tripKey
-    const t = window.setTimeout(() => findRouteRef.current(), 300)
+    if (!tripReady || autoKey.current === tripKey) return
+    // Mark the trip as routed only when the request starts: a re-render in between (the dropped
+    // pin getting its street name) cancels this timer and must not skip the route.
+    const t = window.setTimeout(() => { autoKey.current = tripKey; findRouteRef.current() }, 300)
     return () => window.clearTimeout(t)
-  }, [tab, tripKey, fromPlace, to])
+  }, [tripReady, tripKey])
 
   const findRoute = async () => {
     if (!fromPlace || !to) return
