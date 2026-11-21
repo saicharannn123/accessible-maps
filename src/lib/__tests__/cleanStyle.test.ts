@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { StyleSpecification } from 'maplibre-gl'
+import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import { cleanStyle } from '../cleanStyle'
 
 const base = {
@@ -11,6 +12,8 @@ const base = {
     { id: 'water', type: 'fill', source: 'v', 'source-layer': 'water', paint: { 'fill-color': '#000' } },
     { id: 'road_motorway_casing', type: 'line', source: 'v', 'source-layer': 'transportation', paint: { 'line-color': '#000', 'line-width': 3 } },
     { id: 'road_minor', type: 'line', source: 'v', 'source-layer': 'transportation', paint: { 'line-color': '#000' } },
+    { id: 'waterway_river', type: 'line', source: 'v', 'source-layer': 'waterway' },
+    { id: 'waterway_line_label', type: 'symbol', source: 'v', 'source-layer': 'waterway' },
     { id: 'label_other', type: 'symbol', source: 'v', 'source-layer': 'place', layout: { 'text-field': '{name}' } },
   ],
 } as unknown as StyleSpecification
@@ -24,6 +27,10 @@ describe('cleanStyle', () => {
     expect(byId.water.paint?.['fill-color']).toBe('#a8d5f2')
     expect(byId.road_motorway_casing.paint).toEqual({ 'line-color': '#dd9f3c', 'line-width': 3 })
     expect(byId.road_minor.paint?.['line-color']).toBe('#ffffff')
+    expect(byId.waterway_river.paint?.['line-color']).toBe('#a8d5f2')
+    // Symbol layers only take text/icon paint properties; a line-color there breaks the whole map.
+    expect(byId.waterway_line_label.paint?.['line-color']).toBeUndefined()
+    expect(validateStyleMin({ ...out, sources: { v: { type: 'vector', url: 'x' }, ne: { type: 'raster', url: 'y' } } })).toEqual([])
     expect(byId.label_other.layout?.['text-transform']).toBe('uppercase')
     expect(byId.label_other.layout?.['text-field']).toBe('{name}')
     expect((base.layers[0] as unknown as { paint: Record<string, string> }).paint['background-color']).toBe('#000')

@@ -6,6 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // MapLibre runs map work in a web worker; bundlers need to be told where its file lives.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { MAP_STYLES, PILOT_CITY, type MapStyleId } from '../config'
+import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import { cleanStyle } from '../lib/cleanStyle'
 import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
@@ -232,7 +233,7 @@ export function MapView(props: Props) {
     styleRef.current = mapStyle
     const look = mapStyle
     map.setStyle(MAP_STYLES[look].url, {
-      transformStyle: (prev, next) => carryOverAppLayers(prev, look === 'clean' ? cleanStyle(next) : next),
+      transformStyle: (prev, next) => carryOverAppLayers(prev, look === 'clean' ? safeClean(next) : next),
     })
     map.once('style.load', () => applyBorders(map, worldviewRef.current))
   }, [mapStyle, ready])
@@ -405,10 +406,19 @@ async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecificat
   try {
     const res = await fetch(url)
     if (!res.ok) throw new Error(String(res.status))
-    return cleanStyle(await res.json())
+    const style = cleanStyle(await res.json())
+    // Never let a restyle mistake blank the whole map: fall back to the plain style.
+    const errors = validateStyleMin(style)
+    if (errors.length) throw new Error(errors[0].message)
+    return style
   } catch {
     return url // still show a map if the restyle can't be prepared
   }
+}
+
+function safeClean(style: StyleSpecification): StyleSpecification {
+  const styled = cleanStyle(style)
+  return validateStyleMin(styled).length ? style : styled
 }
 
 /** A map pin in the category's color with its icon, drawn at 2x for sharp screens. */
