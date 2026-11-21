@@ -64,6 +64,12 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
             enterPending.current = false
             if (r.places[0]) choose(r.places[0])
           }
+          // Then, for sports and cuisines, add places tagged with exactly that (slower lookup).
+          if (r.kind?.tagged) {
+            searchAll(query, ctrl.signal, nearRef.current, true)
+              .then((full) => { if (full.places.length) setFound({ ...full, query }) })
+              .catch(() => {})
+          }
         })
         .catch((e) => { if (e.name !== 'AbortError') setError('Search is unavailable right now. Try again in a moment.') })
     }, 250)
@@ -122,11 +128,12 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
           {error && <li className="search-error">{error}</li>}
           {loading && <li className="search-note" aria-live="polite">Searching…</li>}
           {wantSearch && !loading && !error && places.length === 0 && (
-            <li className="search-note">No matches nearby. Check the spelling or try a street, town or business name.</li>
+            <li className="search-note">No matches near you. Check the spelling or try a street, town or business name.</li>
           )}
           {places.map((r, i) => (
             <li key={`${r.name}-${r.coords.join()}`}>
-              {found?.kind && i === 0 && <div className="search-group">{found.kind.icon} {found.kind.label} near you</div>}
+              {i === 0 && !r.far && <div className="search-group">{found?.kind ? `${found.kind.icon} ${found.kind.label} near you` : 'Near you'}</div>}
+              {r.far && !places[i - 1]?.far && <div className="search-group">Farther away</div>}
               <button
                 type="button"
                 id={`${listId}-${i}`}
