@@ -8,14 +8,18 @@ interface Props {
   value: Place | null
   onSelect: (p: Place | null) => void
   extraOptions?: { label: string; onPick: () => void }[]
+  /** Prefer results near this point. */
+  near?: [number, number]
 }
 
-export function SearchBox({ label, placeholder, value, onSelect, extraOptions = [] }: Props) {
+export function SearchBox({ label, placeholder, value, onSelect, extraOptions = [], near }: Props) {
   const [text, setText] = useState(value?.name ?? '')
   const [results, setResults] = useState<Place[]>([])
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const timer = useRef<number | undefined>(undefined)
+  const nearRef = useRef(near)
+  useEffect(() => { nearRef.current = near })
 
   // Keep the text in step when the parent picks a place (e.g. "Pick on map").
   const [shownValue, setShownValue] = useState(value)
@@ -29,7 +33,7 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
     window.clearTimeout(timer.current)
     const ctrl = new AbortController()
     timer.current = window.setTimeout(() => {
-      searchPlaces(text, ctrl.signal)
+      searchPlaces(text, ctrl.signal, nearRef.current)
         .then((r) => { setResults(r); setError(null) })
         .catch((e) => { if (e.name !== 'AbortError') setError('Search is unavailable right now') })
     }, 300)
@@ -39,7 +43,7 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
   return (
     <div className="search">
       <label>
-        <span className="search-label">{label}</span>
+        {label ? <span className="search-label">{label}</span> : <span className="sr-only">Search</span>}
         <input
           type="search"
           value={text}

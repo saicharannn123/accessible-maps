@@ -14,11 +14,11 @@ interface PhotonFeature {
   }
 }
 
-/** Search places, biased toward the pilot city. */
-export async function searchPlaces(query: string, signal?: AbortSignal): Promise<Place[]> {
+/** Search places, biased toward `near` (your location or the map), else the pilot city. */
+export async function searchPlaces(query: string, signal?: AbortSignal, near?: [number, number]): Promise<Place[]> {
   const q = query.trim()
   if (q.length < 2) return []
-  const [lon, lat] = PILOT_CITY.center
+  const [lon, lat] = near ?? PILOT_CITY.center
   const url = `${GEOCODER_URL}?q=${encodeURIComponent(q)}&limit=6&lat=${lat}&lon=${lon}`
   const res = await fetch(url, { signal })
   if (!res.ok) throw new Error(`Search failed (${res.status})`)

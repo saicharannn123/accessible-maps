@@ -4,6 +4,7 @@ import { SearchBox } from './components/SearchBox'
 import { APP_NAME, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS } from './config'
 import { bboxOf, distanceMeters, formatDistance, formatDuration } from './lib/geo'
 import { fetchAccessData, type AccessData } from './lib/overpass'
+import { openStatus } from './lib/hours'
 import { CATEGORIES, CATEGORY_BY_ID, fetchNearby, type NearbyPlace } from './lib/places'
 import { loadReports, saveReports, timeAgo } from './lib/reports'
 import { planRoute } from './lib/routing'
@@ -45,6 +46,14 @@ export default function App() {
   const [nearby, setNearby] = useState<Nearby>({ category: null, radius: 1000, center: null, places: [], status: 'idle' })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [accessibleOnly, setAccessibleOnly] = useState(false)
+  const [openOnly, setOpenOnly] = useState(false)
+  const [moreCats, setMoreCats] = useState(false)
+  const [now, setNow] = useState(() => new Date())
+  // Keep "Open now" right while the page stays open.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
   const [fitTo, setFitTo] = useState<{ points: LngLat[]; key: number } | null>(null)
   const nearbyCtrl = useRef<AbortController | null>(null)
   const panelScroll = useRef<HTMLDivElement>(null)
@@ -119,10 +128,17 @@ export default function App() {
     searchNearby(id, nearby.radius, searchCenter)
   }
 
-  const shownPlaces = useMemo(
-    () => (accessibleOnly ? nearby.places.filter((p) => p.wheelchair === 'yes' || p.wheelchair === 'limited') : nearby.places),
-    [nearby.places, accessibleOnly],
+  const statusById = useMemo(
+    () => new Map(nearby.places.map((p) => [p.id, openStatus(p.openingHours, now)])),
+    [nearby.places, now],
   )
+  const shownPlaces = useMemo(
+    () => nearby.places.filter((p) =>
+      (!accessibleOnly || p.wheelchair === 'yes' || p.wheelchair === 'limited') &&
+      (!openOnly || statusById.get(p.id)?.open === true)),
+    [nearby.places, accessibleOnly, openOnly, statusById],
+  )
+  const openCount = useMemo(() => [...statusById.values()].filter((s) => s?.open).length, [statusById])
   const selected = nearby.places.find((p) => p.id === selectedId) ?? null
   const movedAway = nearby.status === 'done' && nearby.category != null && !selected &&
     distanceMeters(viewBase ?? nearby.center ?? mapCenter, mapCenter) > Math.max(400, nearby.radius * 0.6)
@@ -288,19 +304,31 @@ export default function App() {
         {tab === 'nearby' && (
           <section>
             {!selected && <>
+            <SearchBox label="" placeholder="Search a place, address or city" value={null}
+              near={searchCenter}
+              onSelect={(p) => {
+                if (!p) return
+                appMoving.current = true
+                setFlyTo(p.coords)
+                // A specific address becomes the new "near" point for the categories.
+                if (nearby.category) searchNearby(nearby.category, nearby.radius, p.coords)
+              }} />
             <p className="muted small loc-line">
               {locStatus === 'found' && myLocation ? '📍 Showing places near your location'
                 : locStatus === 'asking' ? 'Finding your location…'
                 : <>Location is off, so places near the map center are shown. <button type="button" className="link" onClick={() => { setLocStatus('asking'); locate(true) }}>Try again</button></>}
             </p>
             <div className="cat-grid" role="group" aria-label="Categories">
-              {CATEGORIES.map((c) => (
+              {CATEGORIES.filter((c, i) => moreCats || i < 7 || c.id === nearby.category).map((c) => (
                 <button key={c.id} type="button" aria-pressed={nearby.category === c.id}
                   className={nearby.category === c.id ? 'active' : ''} style={{ '--cat': c.color } as CSSProperties}
                   onClick={() => pickCategory(c.id)}>
                   <span className="cat-icon" aria-hidden="true">{c.icon}</span>{c.label}
                 </button>
               ))}
+              <button type="button" aria-expanded={moreCats} onClick={() => setMoreCats((m) => !m)}>
+                <span className="cat-icon" aria-hidden="true">{moreCats ? '▴' : '⋯'}</span>{moreCats ? 'Less' : 'More'}
+              </button>
             </div>
 
             {nearby.category && (
@@ -312,8 +340,12 @@ export default function App() {
                   </select>
                 </label>
                 <label className="check">
+                  <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} />
+                  Open now
+                </label>
+                <label className="check">
                   <input type="checkbox" checked={accessibleOnly} onChange={(e) => setAccessibleOnly(e.target.checked)} />
-                  ♿ Accessible only
+                  ♿ Accessible
                 </label>
               </div>
             )}
@@ -325,7 +357,8 @@ export default function App() {
                 <h2>{selected.name}</h2>
                 <p className="muted">{CATEGORY_BY_ID[selected.category]?.icon} {selected.kind} · {formatDistance(selected.distance)} away</p>
                 {selected.address && <p>{selected.address}</p>}
-                {selected.openingHours && <p><strong>Hours:</strong> {selected.openingHours}</p>}
+                <OpenLine status={statusById.get(selected.id) ?? null} />
+                {selected.openingHours && <p className="muted small">Hours: {selected.openingHours}</p>}
                 <p className={`wc wc-${selected.wheelchair}`}>{WHEELCHAIR_TEXT[selected.wheelchair]}</p>
                 <div className="actions">
                   <button type="button" className="primary" onClick={() => directionsTo(selected)}>Directions</button>
@@ -344,14 +377,14 @@ export default function App() {
             {!selected && nearby.status === 'done' && (
               shownPlaces.length === 0 ? (
                 <p className="muted">
-                  Nothing found within {formatDistance(nearby.radius)}.{' '}
+                  {openOnly && nearby.places.length > 0 ? 'Nothing open right now that lists its hours. ' : `Nothing found within ${formatDistance(nearby.radius)}. `}
                   {nearby.radius < RADII[RADII.length - 1] && (
                     <button type="button" className="link" onClick={() => searchNearby(nearby.category!, RADII[RADII.indexOf(nearby.radius) + 1] ?? 5000, nearby.center ?? searchCenter)}>Search wider</button>
                   )}
                 </p>
               ) : (
                 <>
-                  <p className="muted small">{shownPlaces.length} {shownPlaces.length === 1 ? 'place' : 'places'}, nearest first</p>
+                  <p className="muted small">{shownPlaces.length} {shownPlaces.length === 1 ? 'place' : 'places'}, nearest first{!openOnly && openCount > 0 ? ` · ${openCount} open now` : ''}</p>
                   <ul className="results">
                     {shownPlaces.map((p) => (
                       <li key={p.id}>
@@ -360,6 +393,7 @@ export default function App() {
                           <span className="res-text">
                             <strong>{p.name}</strong>
                             <span>{p.kind}{p.address ? ` · ${p.address}` : ''}</span>
+                            <OpenLine status={statusById.get(p.id) ?? null} compact />
                             {p.wheelchair !== 'unknown' && <span className={`wc wc-${p.wheelchair}`}>{WHEELCHAIR_TEXT[p.wheelchair]}</span>}
                           </span>
                           <span className="res-dist">{formatDistance(p.distance)}</span>
@@ -501,5 +535,16 @@ export default function App() {
         </div>
       </aside>
     </div>
+  )
+}
+
+function OpenLine({ status, compact = false }: { status: ReturnType<typeof openStatus>; compact?: boolean }) {
+  if (!status) return compact ? null : <p className="muted small">Hours not listed</p>
+  const Tag = compact ? 'span' : 'p'
+  return (
+    <Tag className="open-line">
+      <b className={status.open ? 'is-open' : 'is-closed'}>{status.open ? 'Open' : 'Closed'}</b>
+      {status.detail !== 'Closed' && <> · {status.detail}</>}
+    </Tag>
   )
 }
