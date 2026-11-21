@@ -8,6 +8,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { MAP_STYLES, PILOT_CITY, type MapStyleId } from '../config'
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import { cleanStyle } from '../lib/cleanStyle'
+import { renameExpression } from '../lib/placeNames'
 import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
 import type { AccessData } from '../lib/overpass'
@@ -43,6 +44,8 @@ interface Props {
   onUserMove: () => void
   /** Show country borders as this country officially sees them; null = as on the ground (OpenStreetMap). */
   worldview: WorldviewCode | null
+  /** Whose place names to show (e.g. US: "Gulf of America"); null = neutral. */
+  nameView: string | null
   mapStyle: MapStyleId
   /** Points the camera should frame, e.g. a list of nearby results. */
   fitTo: { points: LngLat[]; key: number } | null
@@ -82,7 +85,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, mapStyle } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, nameView, mapStyle } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -227,6 +230,13 @@ export function MapView(props: Props) {
     if (ready && map) applyBorders(map, worldview)
   }, [worldview, ready])
 
+  const nameViewRef = useRef(nameView)
+  useEffect(() => {
+    nameViewRef.current = nameView
+    const map = mapRef.current
+    if (ready && map) applyNames(map, nameView)
+  }, [nameView, ready])
+
   // Switch the base map look, carrying our own layers (places, route, borders...) across.
   const styleRef = useRef(mapStyle)
   useEffect(() => {
@@ -237,7 +247,11 @@ export function MapView(props: Props) {
     map.setStyle(MAP_STYLES[look].url, {
       transformStyle: (prev, next) => carryOverAppLayers(prev, look === 'clean' ? safeClean(next) : next),
     })
-    map.once('style.load', () => applyBorders(map, worldviewRef.current))
+    map.once('style.load', () => {
+      ORIGINAL_TEXT.delete(map) // new style, new labels
+      applyBorders(map, worldviewRef.current)
+      applyNames(map, nameViewRef.current)
+    })
   }, [mapStyle, ready])
 
   const setData = (id: string, data: FC) => {
@@ -383,6 +397,26 @@ function applyBorders(map: MlMap, worldview: WorldviewCode | null) {
   map.setFilter('wv-dashed', dashedFilter(worldview) as never)
   map.setFilter('wv-solid', solidFilter(worldview) as never)
   for (const id of WV_LAYERS) map.setLayoutProperty(id, 'visibility', 'visible')
+}
+
+// Each label layer's own text expression, kept so the name view can be changed again later.
+const ORIGINAL_TEXT = new WeakMap<MlMap, Map<string, unknown>>()
+
+/** Show renamed places (see placeNames.ts) the way this country's view names them. */
+function applyNames(map: MlMap, nameView: string | null) {
+  let originals = ORIGINAL_TEXT.get(map)
+  if (!originals) {
+    originals = new Map()
+    for (const l of map.getStyle().layers) {
+      const field = l.type === 'symbol' ? l.layout?.['text-field'] : undefined
+      // Only map labels that read a name; skip road numbers and our own layers.
+      if (field && JSON.stringify(field).includes('"name')) originals.set(l.id, field)
+    }
+    ORIGINAL_TEXT.set(map, originals)
+  }
+  for (const [id, field] of originals) {
+    if (map.getLayer(id)) map.setLayoutProperty(id, 'text-field', renameExpression(field, nameView) as never)
+  }
 }
 
 const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'places', 'me', WV_SOURCE]

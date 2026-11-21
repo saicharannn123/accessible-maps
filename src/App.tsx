@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { MapView, type Layers } from './components/MapView'
 import { SearchBox } from './components/SearchBox'
 import { APP_NAME, MAP_STYLES, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS, type MapStyleId } from './config'
-import { browserWorldview, WORLDVIEWS, type WorldviewCode, type WorldviewSetting } from './lib/worldview'
+import { browserNameView, browserWorldview, WORLDVIEWS, type WorldviewCode, type WorldviewSetting } from './lib/worldview'
 import { bboxOf, distanceMeters, formatDistance, formatDuration } from './lib/geo'
 import { fetchAccessData, type AccessData } from './lib/overpass'
 import { openStatus } from './lib/hours'
@@ -71,6 +71,7 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings)
   // Borders: ?borders=IN in the address forces a view (handy for testing), otherwise the setting.
   const [autoWorldview] = useState(browserWorldview)
+  const [autoNameView] = useState(browserNameView)
   const [urlWorldview] = useState(() => {
     const v = new URLSearchParams(window.location.search).get('borders')?.toUpperCase()
     return v && v in WORLDVIEWS ? (v as WorldviewCode) : v === 'OSM' ? ('osm' as const) : null
@@ -78,6 +79,9 @@ export default function App() {
   const worldviewSetting: WorldviewSetting = urlWorldview ?? settings.worldview
   const worldview: WorldviewCode | null =
     worldviewSetting === 'osm' ? null : worldviewSetting === 'auto' ? autoWorldview : worldviewSetting
+  // Place names follow the same choice; on Automatic, US and Mexico visitors also get their own names.
+  const nameView: WorldviewCode | null =
+    worldviewSetting === 'osm' ? null : worldviewSetting === 'auto' ? autoNameView : worldviewSetting
 
   const [reports, setReports] = useState<Report[]>(() => loadReports())
   const [access, setAccess] = useState<AccessData | null>(null)
@@ -322,6 +326,7 @@ export default function App() {
         myLocation={myLocation}
         myAccuracy={loc.accuracy}
         worldview={worldview}
+        nameView={nameView}
         mapStyle={settings.mapLook}
         follow={follow && loc.status === 'live'}
         onUserMove={() => { setFollow(false); setUserPanned(true) }}
@@ -648,17 +653,17 @@ export default function App() {
               </div>
             </div>
             <label className="field">
-              <span>Country borders</span>
+              <span>Borders and place names</span>
               <select value={worldviewSetting} disabled={urlWorldview != null}
                 onChange={(e) => setSettings({ ...settings, worldview: e.target.value as WorldviewSetting })}>
-                <option value="auto">Automatic{autoWorldview ? ` (as shown in ${WORLDVIEWS[autoWorldview]})` : ' (as on the ground)'}</option>
+                <option value="auto">Automatic{autoNameView ? ` (as shown in ${WORLDVIEWS[autoNameView]})` : ' (as on the ground)'}</option>
                 <option value="osm">As on the ground (OpenStreetMap)</option>
                 {(Object.entries(WORLDVIEWS) as [WorldviewCode, string][])
                   .sort((a, b) => a[1].localeCompare(b[1]))
                   .map(([code, name]) => <option key={code} value={code}>As shown in {name}</option>)}
               </select>
             </label>
-            <p className="muted small">Some borders are disputed. Like Google Maps and Apple Maps, {APP_NAME} can show them the way a country officially does. Automatic follows your region.</p>
+            <p className="muted small">Some borders and names are disputed. Like Google Maps and Apple Maps, {APP_NAME} can show them the way a country officially does: for example, the Gulf of America in the United States and the Gulf of Mexico in Mexico. Automatic follows your region.</p>
             <label className="field">
               <span>Mobility profile</span>
               <select value={settings.profile} onChange={(e) => setProfile(e.target.value as MobilityProfile)}>

@@ -13,7 +13,7 @@ export const WORLDVIEWS = {
   US: 'United States', GB: 'United Kingdom', FR: 'France', DE: 'Germany', ES: 'Spain', IT: 'Italy',
   NL: 'Netherlands', PT: 'Portugal', SE: 'Sweden', PL: 'Poland', GR: 'Greece', TR: 'Türkiye',
   RU: 'Russia', UA: 'Ukraine', IL: 'Israel', PS: 'Palestine', SA: 'Saudi Arabia', EG: 'Egypt',
-  MA: 'Morocco', BR: 'Brazil', AR: 'Argentina', JP: 'Japan', KO: 'South Korea', VN: 'Vietnam', ID: 'Indonesia',
+  MA: 'Morocco', MX: 'Mexico', BR: 'Brazil', AR: 'Argentina', JP: 'Japan', KO: 'South Korea', VN: 'Vietnam', ID: 'Indonesia',
 } as const
 export type WorldviewCode = keyof typeof WORLDVIEWS
 
@@ -28,6 +28,35 @@ const TIMEZONE_COUNTRY: Record<string, WorldviewCode> = {
   'Asia/Gaza': 'PS', 'Asia/Hebron': 'PS', 'Europe/Istanbul': 'TR', 'Europe/Athens': 'GR', 'Europe/Moscow': 'RU',
   'Europe/Kyiv': 'UA', 'Europe/Kiev': 'UA', 'America/Argentina/Buenos_Aires': 'AR', 'Asia/Tokyo': 'JP',
   'Asia/Seoul': 'KO', 'Asia/Ho_Chi_Minh': 'VN', 'Asia/Saigon': 'VN',
+}
+
+// The US and Mexico draw borders as on the ground, but name some places differently (see placeNames.ts).
+const NAME_TIMEZONE_PREFIX: [RegExp, WorldviewCode][] = [
+  [/^America\/(New_York|Chicago|Denver|Los_Angeles|Phoenix|Anchorage|Juneau|Sitka|Nome|Adak|Boise|Detroit|Indiana\/.*|Kentucky\/.*|North_Dakota\/.*|Menominee|Metlakatla|Yakutat)$/, 'US'],
+  [/^Pacific\/Honolulu$/, 'US'],
+  [/^America\/(Mexico_City|Cancun|Merida|Monterrey|Matamoros|Chihuahua|Ciudad_Juarez|Ojinaga|Mazatlan|Bahia_Banderas|Hermosillo|Tijuana)$/, 'MX'],
+]
+
+/** Which country's place names to show automatically: the border view, or the US / Mexico. */
+export function detectNameView(timeZone?: string, languages: readonly string[] = []): WorldviewCode | null {
+  const border = detectWorldview(timeZone, languages)
+  if (border) return border
+  for (const [re, code] of NAME_TIMEZONE_PREFIX) if (timeZone && re.test(timeZone)) return code
+  // Many browsers everywhere say en-US, so only trust the language when there's no time zone.
+  if (timeZone) return null
+  for (const lang of languages) {
+    const region = lang.split('-')[1]?.toUpperCase()
+    if (region === 'US' || region === 'MX') return region
+  }
+  return null
+}
+
+export function browserNameView(): WorldviewCode | null {
+  try {
+    return detectNameView(Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.languages ?? [navigator.language])
+  } catch {
+    return null
+  }
 }
 
 /**
