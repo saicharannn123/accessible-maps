@@ -63,7 +63,15 @@ export async function searchAll(query: string, signal?: AbortSignal, near?: LngL
   const take = (ps: Place[]) => ps.filter((p) => { const k = key(p); if (seen.has(k)) return false; seen.add(k); return true })
   // Exactly what you asked for (e.g. courts tagged badminton) first, then name matches and the
   // wider kind (sports centres), all nearest first.
-  let near1 = [...take([...tagged].sort(byDistance)), ...take([...local, ...ofKind].sort(byDistance))]
+  // Places named what you typed ("Walmart", "Sushi Palace") beat generic places of the kind.
+  const words = q.toLowerCase().split(/\s+/).filter((w) => w.length > 2)
+  const named = (p: Place) => words.length > 0 && words.every((w) => p.name.toLowerCase().includes(w))
+  const localNamed = local.filter((p) => named(p) && dist(p) <= NEAR_LIMIT_M)
+  let near1 = [
+    ...take([...tagged].sort(byDistance)),
+    ...take([...localNamed].sort(byDistance)),
+    ...take([...local, ...ofKind].sort(byDistance)),
+  ]
 
   if (near1.length < MIN_LOCAL) {
     const wider = await quiet(photon(q, center, `&limit=15&bbox=${bbox(center, 1.2)}`, signal))
