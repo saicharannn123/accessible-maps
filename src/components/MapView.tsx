@@ -6,10 +6,11 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // MapLibre runs map work in a web worker; bundlers need to be told where its file lives.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { MAP_STYLES, PILOT_CITY, type MapStyleId } from '../config'
+import { cleanStyle } from '../lib/cleanStyle'
 import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
 import type { AccessData } from '../lib/overpass'
-import { CATEGORY_BY_ID, type NearbyPlace } from '../lib/places'
+import { CATEGORIES, CATEGORY_BY_ID, type NearbyPlace } from '../lib/places'
 import { REPORT_LABELS } from '../lib/types'
 import type { LngLat, Report, RouteResult } from '../lib/types'
 import { timeAgo } from '../lib/reports'
@@ -94,114 +95,122 @@ export function MapView(props: Props) {
   })
 
   useEffect(() => {
-    if (!container.current) return
-    const map = new maplibregl.Map({
-      container: container.current,
-      style: MAP_STYLES[mapStyle].url,
-      center: PILOT_CITY.center,
-      zoom: PILOT_CITY.zoom,
+    const el = container.current
+    if (!el) return
+    let created: MlMap | null = null
+    let cancelled = false
+    loadBaseStyle(mapStyle).then((style) => {
+      if (!cancelled) setup(new maplibregl.Map({ container: el, style, center: PILOT_CITY.center, zoom: PILOT_CITY.zoom }))
     })
-    mapRef.current = map
-    map.addControl(new maplibregl.NavigationControl(), 'top-right')
+    return () => { cancelled = true; created?.remove(); mapRef.current = null }
 
-    const emitView = () => {
-      const b = map.getBounds()
-      viewRef.current([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], map.getZoom())
+    function setup(map: MlMap) {
+      created = map
+      mapRef.current = map
+      // Category pins are drawn on demand, so they survive switching the map look.
+      map.on('styleimagemissing', (e) => addCategoryIcon(map, e.id))
+      map.addControl(new maplibregl.NavigationControl(), 'top-right')
+
+      const emitView = () => {
+        const b = map.getBounds()
+        viewRef.current([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], map.getZoom())
+      }
+
+      map.on('load', () => {
+        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'places', 'me']) {
+          map.addSource(id, { type: 'geojson', data: empty })
+        }
+        map.addLayer({ id: 'lit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], true],
+          paint: { 'line-color': '#f5c518', 'line-width': 4, 'line-opacity': 0.7 } })
+        map.addLayer({ id: 'unlit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], false],
+          paint: { 'line-color': '#3b3b58', 'line-width': 4, 'line-opacity': 0.7, 'line-dasharray': [1, 1] } })
+        map.addLayer({ id: 'route-casing', type: 'line', source: 'route',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#ffffff', 'line-width': 10 } })
+        map.addLayer({ id: 'route', type: 'line', source: 'route',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#1a5fd6', 'line-width': 6 } })
+        map.addLayer({ id: 'obstacles', type: 'circle', source: 'obstacles',
+          paint: { 'circle-radius': 4, 'circle-color': '#b45309', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } })
+        map.addLayer({ id: 'restrooms', type: 'circle', source: 'restrooms',
+          paint: {
+            'circle-radius': 8,
+            'circle-color': ['match', ['get', 'wheelchair'], 'yes', '#15803d', 'limited', '#ca8a04', 'no', '#7c3aed', '#6b7280'],
+            'circle-stroke-color': '#fff', 'circle-stroke-width': 2,
+          } })
+        map.addLayer({ id: 'reports', type: 'circle', source: 'reports',
+          paint: { 'circle-radius': 9, 'circle-color': '#dc2626', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } })
+        map.addLayer({ id: 'warnings', type: 'circle', source: 'warnings',
+          paint: { 'circle-radius': 12, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#ea580c', 'circle-stroke-width': 3 } })
+        map.addLayer({ id: 'endpoints', type: 'circle', source: 'endpoints',
+          paint: {
+            'circle-radius': 9,
+            'circle-color': ['match', ['get', 'role'], 'from', '#15803d', '#1a5fd6'],
+            'circle-stroke-color': '#fff', 'circle-stroke-width': 3,
+          } })
+
+        map.addLayer({ id: 'places-selected', type: 'circle', source: 'places', filter: ['==', ['get', 'selected'], true],
+          paint: { 'circle-radius': 16, 'circle-color': ['get', 'color'], 'circle-opacity': 0.22 } })
+        map.addLayer({ id: 'places', type: 'symbol', source: 'places',
+          layout: {
+            'icon-image': ['concat', 'cat-', ['get', 'category']],
+            'icon-size': ['case', ['==', ['get', 'selected'], true], 1.1, 0.8],
+            'icon-anchor': 'bottom',
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+            'symbol-sort-key': ['case', ['==', ['get', 'selected'], true], 1, 0],
+          } })
+        // Accuracy halo: meters turned into pixels for the current zoom (2^zoom doubles each level).
+        map.addLayer({ id: 'me-halo', type: 'circle', source: 'me',
+          paint: {
+            'circle-radius': ['interpolate', ['exponential', 2], ['zoom'],
+              0, ['max', 14, ['/', ['get', 'acc'], 78271.5]],
+              22, ['max', 14, ['/', ['get', 'acc'], 0.0187]]],
+            'circle-color': '#1a73e8', 'circle-opacity': 0.15,
+            'circle-stroke-color': '#1a73e8', 'circle-stroke-opacity': 0.3, 'circle-stroke-width': 1,
+          } })
+        map.addLayer({ id: 'me', type: 'circle', source: 'me',
+          paint: { 'circle-radius': 7, 'circle-color': '#1a73e8', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
+
+        map.on('click', 'places', (e) => {
+          const id = e.features?.[0]?.properties?.id
+          if (id) placeClickRef.current(String(id))
+        })
+
+        map.on('click', 'restrooms', (e) => {
+          const p = e.features?.[0]?.properties
+          if (!p) return
+          const accessText = { yes: 'Wheelchair accessible', limited: 'Partly accessible', no: 'Not wheelchair accessible', unknown: 'Accessibility unknown' }[p.wheelchair as string]
+          new maplibregl.Popup().setLngLat(e.lngLat).setHTML(
+            `<strong>${escapeHtml(p.name)}</strong><br>${accessText}<br>` +
+            `${p.fee === 'free' ? 'Free' : p.fee === 'paid' ? 'Paid' : 'Fee unknown'}` +
+            `${p.changingTable ? ' · Changing table' : ''}` +
+            `${p.openingHours ? `<br>Hours: ${escapeHtml(p.openingHours)}` : ''}`,
+          ).addTo(map)
+        })
+        map.on('click', 'reports', (e) => {
+          const p = e.features?.[0]?.properties
+          if (!p) return
+          new maplibregl.Popup().setLngLat(e.lngLat).setHTML(
+            `<strong>${escapeHtml(p.label)}</strong><br>${escapeHtml(p.ago)}${p.note ? `<br>"${escapeHtml(p.note)}"` : ''}`,
+          ).addTo(map)
+        })
+        for (const id of ['restrooms', 'reports', 'places']) {
+          map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
+          map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })
+        }
+        setReady(true)
+        emitView()
+      })
+
+      map.on('click', (e) => {
+        const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places'] }) : []
+        if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
+      })
+      map.on('moveend', emitView)
+      // Only real drags/zooms by the visitor carry an originalEvent; our own camera moves don't.
+      map.on('dragstart', (e) => { if (e.originalEvent) userMoveRef.current() })
     }
-
-    map.on('load', () => {
-      for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'places', 'me']) {
-        map.addSource(id, { type: 'geojson', data: empty })
-      }
-      map.addLayer({ id: 'lit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], true],
-        paint: { 'line-color': '#f5c518', 'line-width': 4, 'line-opacity': 0.7 } })
-      map.addLayer({ id: 'unlit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], false],
-        paint: { 'line-color': '#3b3b58', 'line-width': 4, 'line-opacity': 0.7, 'line-dasharray': [1, 1] } })
-      map.addLayer({ id: 'route-casing', type: 'line', source: 'route',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#ffffff', 'line-width': 10 } })
-      map.addLayer({ id: 'route', type: 'line', source: 'route',
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#1a5fd6', 'line-width': 6 } })
-      map.addLayer({ id: 'obstacles', type: 'circle', source: 'obstacles',
-        paint: { 'circle-radius': 4, 'circle-color': '#b45309', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } })
-      map.addLayer({ id: 'restrooms', type: 'circle', source: 'restrooms',
-        paint: {
-          'circle-radius': 8,
-          'circle-color': ['match', ['get', 'wheelchair'], 'yes', '#15803d', 'limited', '#ca8a04', 'no', '#7c3aed', '#6b7280'],
-          'circle-stroke-color': '#fff', 'circle-stroke-width': 2,
-        } })
-      map.addLayer({ id: 'reports', type: 'circle', source: 'reports',
-        paint: { 'circle-radius': 9, 'circle-color': '#dc2626', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } })
-      map.addLayer({ id: 'warnings', type: 'circle', source: 'warnings',
-        paint: { 'circle-radius': 12, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#ea580c', 'circle-stroke-width': 3 } })
-      map.addLayer({ id: 'endpoints', type: 'circle', source: 'endpoints',
-        paint: {
-          'circle-radius': 9,
-          'circle-color': ['match', ['get', 'role'], 'from', '#15803d', '#1a5fd6'],
-          'circle-stroke-color': '#fff', 'circle-stroke-width': 3,
-        } })
-
-      map.addLayer({ id: 'places-selected', type: 'circle', source: 'places', filter: ['==', ['get', 'selected'], true],
-        paint: { 'circle-radius': 20, 'circle-color': ['get', 'color'], 'circle-opacity': 0.25 } })
-      map.addLayer({ id: 'places', type: 'circle', source: 'places',
-        paint: {
-          'circle-radius': ['case', ['==', ['get', 'selected'], true], 11, 8],
-          'circle-color': ['get', 'color'],
-          'circle-stroke-color': '#fff', 'circle-stroke-width': 2,
-        } })
-      // Accuracy halo: meters turned into pixels for the current zoom (2^zoom doubles each level).
-      map.addLayer({ id: 'me-halo', type: 'circle', source: 'me',
-        paint: {
-          'circle-radius': ['interpolate', ['exponential', 2], ['zoom'],
-            0, ['max', 14, ['/', ['get', 'acc'], 78271.5]],
-            22, ['max', 14, ['/', ['get', 'acc'], 0.0187]]],
-          'circle-color': '#1a73e8', 'circle-opacity': 0.15,
-          'circle-stroke-color': '#1a73e8', 'circle-stroke-opacity': 0.3, 'circle-stroke-width': 1,
-        } })
-      map.addLayer({ id: 'me', type: 'circle', source: 'me',
-        paint: { 'circle-radius': 7, 'circle-color': '#1a73e8', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
-
-      map.on('click', 'places', (e) => {
-        const id = e.features?.[0]?.properties?.id
-        if (id) placeClickRef.current(String(id))
-      })
-
-      map.on('click', 'restrooms', (e) => {
-        const p = e.features?.[0]?.properties
-        if (!p) return
-        const accessText = { yes: 'Wheelchair accessible', limited: 'Partly accessible', no: 'Not wheelchair accessible', unknown: 'Accessibility unknown' }[p.wheelchair as string]
-        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(
-          `<strong>${escapeHtml(p.name)}</strong><br>${accessText}<br>` +
-          `${p.fee === 'free' ? 'Free' : p.fee === 'paid' ? 'Paid' : 'Fee unknown'}` +
-          `${p.changingTable ? ' · Changing table' : ''}` +
-          `${p.openingHours ? `<br>Hours: ${escapeHtml(p.openingHours)}` : ''}`,
-        ).addTo(map)
-      })
-      map.on('click', 'reports', (e) => {
-        const p = e.features?.[0]?.properties
-        if (!p) return
-        new maplibregl.Popup().setLngLat(e.lngLat).setHTML(
-          `<strong>${escapeHtml(p.label)}</strong><br>${escapeHtml(p.ago)}${p.note ? `<br>"${escapeHtml(p.note)}"` : ''}`,
-        ).addTo(map)
-      })
-      for (const id of ['restrooms', 'reports', 'places']) {
-        map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
-        map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })
-      }
-      setReady(true)
-      emitView()
-    })
-
-    map.on('click', (e) => {
-      const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places'] }) : []
-      if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
-    })
-    map.on('moveend', emitView)
-    // Only real drags/zooms by the visitor carry an originalEvent; our own camera moves don't.
-    map.on('dragstart', (e) => { if (e.originalEvent) userMoveRef.current() })
-
-    return () => { map.remove(); mapRef.current = null }
     // The map is created once; style and borders are changed in place by the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -221,8 +230,9 @@ export function MapView(props: Props) {
     const map = mapRef.current
     if (!ready || !map || styleRef.current === mapStyle) return
     styleRef.current = mapStyle
-    map.setStyle(MAP_STYLES[mapStyle].url, {
-      transformStyle: (prev, next) => carryOverAppLayers(prev, next),
+    const look = mapStyle
+    map.setStyle(MAP_STYLES[look].url, {
+      transformStyle: (prev, next) => carryOverAppLayers(prev, look === 'clean' ? cleanStyle(next) : next),
     })
     map.once('style.load', () => applyBorders(map, worldviewRef.current))
   }, [mapStyle, ready])
@@ -285,7 +295,7 @@ export function MapView(props: Props) {
     setData('places', {
       type: 'FeatureCollection',
       features: places.map((p) => point(p.coords, {
-        id: p.id, color: CATEGORY_BY_ID[p.category]?.color ?? '#1a5fd6', selected: p.id === selectedPlaceId,
+        id: p.id, category: p.category, color: CATEGORY_BY_ID[p.category]?.color ?? '#1a5fd6', selected: p.id === selectedPlaceId,
       })),
     })
   }, [places, selectedPlaceId, ready])
@@ -386,4 +396,51 @@ function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpe
     ? [...next.layers, ...borders, ...rest]
     : [...next.layers.slice(0, firstSymbol), ...borders, ...next.layers.slice(firstSymbol), ...rest]
   return { ...next, sources, layers }
+}
+
+/** The style to open with: a URL, or for our own Clean look the restyled style JSON. */
+async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecification> {
+  const url = MAP_STYLES[look].url
+  if (look !== 'clean') return url
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(String(res.status))
+    return cleanStyle(await res.json())
+  } catch {
+    return url // still show a map if the restyle can't be prepared
+  }
+}
+
+/** A map pin in the category's color with its icon, drawn at 2x for sharp screens. */
+function addCategoryIcon(map: MlMap, id: string) {
+  if (!id.startsWith('cat-') || map.hasImage(id)) return
+  const cat = CATEGORIES.find((c) => `cat-${c.id}` === id)
+  const w = 72, h = 88, r = 32, cx = w / 2, cy = r + 4
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.shadowColor = 'rgba(0,0,0,0.3)'
+  ctx.shadowBlur = 4
+  ctx.shadowOffsetY = 2
+  ctx.beginPath()
+  ctx.arc(cx, cy, r, Math.PI * 0.8, Math.PI * 2.2)
+  ctx.lineTo(cx, h - 3)
+  ctx.closePath()
+  ctx.fillStyle = cat?.color ?? '#1a5fd6'
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  ctx.lineWidth = 4
+  ctx.strokeStyle = '#ffffff'
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(cx, cy, r - 8, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  ctx.font = '30px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(cat?.icon ?? '📍', cx, cy + 2)
+  map.addImage(id, ctx.getImageData(0, 0, w, h), { pixelRatio: 2 })
 }
