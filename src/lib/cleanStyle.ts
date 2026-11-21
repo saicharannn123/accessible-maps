@@ -62,7 +62,7 @@ export function cleanStyle(style: StyleSpecification): StyleSpecification {
     else if (id === 'landuse_school') paint(l, { 'fill-color': C.school })
     else if (id === 'landuse_cemetery') paint(l, { 'fill-color': C.cemetery })
     else if (id === 'water') paint(l, { 'fill-color': C.water })
-    else if (id.startsWith('waterway')) paint(l, { 'line-color': C.water })
+    else if (l.type === 'line' && id.startsWith('waterway')) paint(l, { 'line-color': C.water })
     else if (id === 'building') paint(l, { 'fill-color': C.building, 'fill-outline-color': C.buildingLine })
     else if (l.type === 'line' && /^(road|bridge|tunnel)_/.test(id)) {
       const casing = id.endsWith('_casing')
