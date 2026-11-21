@@ -53,6 +53,10 @@ interface Props {
   fitTo: { points: LngLat[]; key: number } | null
   onPlaceClick: (id: string) => void
   onMapClick: (p: LngLat) => void
+  /** Right-click, or a long press on touch screens: show the "directions to here" menu. */
+  onMapContext: (p: LngLat, screen: { x: number; y: number }) => void
+  /** A trip pin was dragged: role is 'from', 'to' or the stop's index. */
+  onPinDrag: (role: 'from' | 'to' | number, p: LngLat) => void
   onViewChange: (bbox: [number, number, number, number], zoom: number) => void
 }
 
@@ -87,7 +91,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -95,7 +99,11 @@ export function MapView(props: Props) {
   const viewRef = useRef(onViewChange)
   const placeClickRef = useRef(onPlaceClick)
   const userMoveRef = useRef(onUserMove)
+  const contextRef = useRef(onMapContext)
+  const pinDragRef = useRef(onPinDrag)
   useEffect(() => {
+    contextRef.current = onMapContext
+    pinDragRef.current = onPinDrag
     userMoveRef.current = onUserMove
     placeClickRef.current = onPlaceClick
     clickRef.current = onMapClick
@@ -218,6 +226,27 @@ export function MapView(props: Props) {
         const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places'] }) : []
         if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
       })
+      map.on('contextmenu', (e) => {
+        e.preventDefault()
+        contextRef.current([e.lngLat.lng, e.lngLat.lat], e.point)
+      })
+      // Long press on touch screens (MapLibre only reports right-clicks as contextmenu).
+      let pressTimer: number | undefined
+      let pressStart: { x: number; y: number } | null = null
+      map.on('touchstart', (e) => {
+        if (e.originalEvent.touches.length !== 1) return
+        pressStart = e.point
+        const at: LngLat = [e.lngLat.lng, e.lngLat.lat]
+        const pt = e.point
+        pressTimer = window.setTimeout(() => { pressStart = null; contextRef.current(at, pt) }, 550)
+      })
+      map.on('touchmove', (e) => {
+        if (pressStart && Math.hypot(e.point.x - pressStart.x, e.point.y - pressStart.y) > 8) { window.clearTimeout(pressTimer); pressStart = null }
+      })
+      map.on('touchend', () => { window.clearTimeout(pressTimer); pressStart = null })
+      map.on('touchcancel', () => { window.clearTimeout(pressTimer); pressStart = null })
+      map.on('movestart', () => { window.clearTimeout(pressTimer); pressStart = null })
+
       map.on('moveend', emitView)
       // Only real drags/zooms by the visitor carry an originalEvent; our own camera moves don't.
       map.on('dragstart', (e) => { if (e.originalEvent) userMoveRef.current() })
@@ -303,13 +332,31 @@ export function MapView(props: Props) {
     }
   }, [route, ready])
 
+  // Trip pins: start, numbered stops and destination, each draggable to fine-tune the spot.
+  const pinMarkers = useRef<maplibregl.Marker[]>([])
   useEffect(() => {
-    if (!ready) return
-    const f: Feature[] = []
-    if (from) f.push(point(from, { role: 'from' }))
-    for (const s of stops) f.push(point(s, { role: 'stop' }))
-    if (to) f.push(point(to, { role: 'to' }))
-    setData('endpoints', { type: 'FeatureCollection', features: f })
+    const map = mapRef.current
+    if (!ready || !map) return
+    for (const m of pinMarkers.current) m.remove()
+    const pins: { role: 'from' | 'to' | number; at: LngLat }[] = [
+      ...(from ? [{ role: 'from' as const, at: from }] : []),
+      ...stops.map((at, i) => ({ role: i, at })),
+      ...(to ? [{ role: 'to' as const, at: to }] : []),
+    ]
+    pinMarkers.current = pins.map(({ role, at }) => {
+      const el = document.createElement('div')
+      el.className = `trip-pin ${role === 'from' ? 'start' : role === 'to' ? 'end' : 'stop'}`
+      if (typeof role === 'number') el.textContent = String(role + 1)
+      el.title = role === 'from' ? 'Start (drag to move)' : role === 'to' ? 'Destination (drag to move)' : `Stop ${role + 1} (drag to move)`
+      const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: role === 'to' ? 'bottom' : 'center' })
+        .setLngLat(at)
+        .addTo(map)
+      marker.on('dragend', () => {
+        const p = marker.getLngLat()
+        pinDragRef.current(role, [p.lng, p.lat])
+      })
+      return marker
+    })
   }, [from, to, stops, ready])
 
   useEffect(() => {

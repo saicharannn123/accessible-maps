@@ -1,4 +1,4 @@
-import { GEOCODER_URL, PILOT_CITY } from '../config'
+import { GEOCODER_URL, PHOTON_REVERSE_URL, PILOT_CITY } from '../config'
 import { distanceMeters } from './geo'
 import { matchKind, photonPlace, searchNearbyKind, searchNearbyTagged } from './search'
 import type { LngLat, Place } from './types'
@@ -85,4 +85,19 @@ export async function searchAll(query: string, signal?: AbortSignal, near?: LngL
 
   const places = [...close, ...nearbyAnywhere.sort(byDistance)].slice(0, 12).concat(far.slice(0, 4))
   return { kind: kind ? { label: kind.label, icon: kind.icon, tagged: !!(kind.sport || kind.cuisine) } : null, places }
+}
+
+/** The address or place name at a point, for a pin dropped on the map. */
+export async function reverseGeocode(c: LngLat, signal?: AbortSignal): Promise<Place | null> {
+  const res = await fetch(`${PHOTON_REVERSE_URL}?lat=${c[1].toFixed(6)}&lon=${c[0].toFixed(6)}&limit=1&lang=en`, { signal })
+  if (!res.ok) return null
+  const f = ((await res.json()) as { features: PhotonFeature[] }).features?.[0]
+  if (!f || distanceMeters(c, f.geometry.coordinates) > 150) return null
+  const p = f.properties
+  const street = [p.housenumber, p.street].filter(Boolean).join(' ')
+  const name = p.name || street
+  if (!name) return null
+  const detail = [p.name ? street : '', p.city, p.state].filter(Boolean).join(', ')
+  // Keep the exact spot that was tapped; the address just names it.
+  return { name, detail, coords: c }
 }
