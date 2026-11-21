@@ -23,6 +23,8 @@ export interface Place {
   name: string
   detail: string
   coords: LngLat
+  /** Emoji for the kind of place, shown in search results. */
+  icon?: string
 }
 
 export type ReportType =

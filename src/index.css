@@ -205,3 +205,6 @@ section h2 { font-size: 1rem; margin: 8px 0 0; }
 .chip:disabled { opacity: .5; cursor: default; }
 .chip.loc { background: #e0f2fe; border-color: #bae6fd; color: #075985; }
 .trip-points li:not(:has(.icon-btn))::after { content: ''; flex: none; width: 40px; }
+.search-results button.active { background: #e8f0fe; }
+.search-note { padding: 8px 10px; color: #6b7280; font-size: .9rem; }
+.search-group { padding: 6px 10px 2px; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; }
