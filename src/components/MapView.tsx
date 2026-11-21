@@ -6,7 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // MapLibre runs map work in a web worker; bundlers need to be told where its file lives.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { MAP_STYLE_URL, PILOT_CITY } from '../config'
-import { bboxOf } from '../lib/geo'
+import { bboxOf, distanceMeters } from '../lib/geo'
 import type { AccessData } from '../lib/overpass'
 import { CATEGORY_BY_ID, type NearbyPlace } from '../lib/places'
 import { REPORT_LABELS } from '../lib/types'
@@ -268,17 +268,23 @@ export function MapView(props: Props) {
     setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation, { acc: myAccuracy ?? 0 })] } : empty)
   }, [myLocation, myAccuracy, ready])
 
-  // Follow the visitor: jump in on the first fix, then glide along as they move.
-  const hadFix = useRef(false)
+  // Follow the visitor. The first fix jumps straight there (a long animated flight across the
+  // country leaves half-loaded tiles behind). After that, only glide when they've really moved,
+  // and never interrupt a camera move that's already running: GPS sends small updates every
+  // second, and restarting the animation each time stopped tiles from ever finishing loading.
+  const lastFollowed = useRef<LngLat | null>(null)
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map || !myLocation || !follow) return
-    if (!hadFix.current) {
-      hadFix.current = true
-      map.flyTo({ center: myLocation, zoom: Math.max(map.getZoom(), 15) })
-    } else {
-      map.easeTo({ center: myLocation, duration: 600 })
+    const last = lastFollowed.current
+    if (!last || distanceMeters(last, myLocation) > 2000) {
+      lastFollowed.current = myLocation
+      map.jumpTo({ center: myLocation, zoom: Math.max(map.getZoom(), 15) })
+      return
     }
+    if (map.isMoving() || distanceMeters(last, myLocation) < 8) return
+    lastFollowed.current = myLocation
+    map.easeTo({ center: myLocation, duration: 500 })
   }, [myLocation, follow, ready])
 
   useEffect(() => {
