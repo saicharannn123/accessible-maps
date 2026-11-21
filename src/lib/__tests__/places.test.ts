@@ -44,3 +44,16 @@ describe('nearby places', () => {
     expect(places.map((p) => p.name)).toEqual(['Parking', 'Chase'])
   })
 })
+
+describe('photon results', () => {
+  it('uses full OSM tags when available and Photon basics otherwise', async () => {
+    const { photonToElements } = await import('../places')
+    const els = photonToElements([
+      { geometry: { coordinates: [-122.3321, 47.6065] }, properties: { osm_type: 'N', osm_id: 5, osm_key: 'amenity', osm_value: 'cafe', name: 'Bean', housenumber: '1', street: 'Pike St', city: 'Seattle' } },
+      { geometry: { coordinates: [-122.3321, 47.607] }, properties: { osm_type: 'W', osm_id: 6, osm_key: 'amenity', osm_value: 'cafe', name: 'Leaf' } },
+    ], new Map([['node/5', { amenity: 'cafe', name: 'Bean Bar', opening_hours: '24/7', wheelchair: 'yes' }]]))
+    const places = parseNearby(els, CATEGORY_BY_ID.coffee, center)
+    expect(places[0]).toMatchObject({ id: 'node/5', name: 'Bean Bar', openingHours: '24/7', wheelchair: 'yes', address: '1 Pike St, Seattle' })
+    expect(places[1]).toMatchObject({ id: 'way/6', name: 'Leaf', wheelchair: 'unknown' })
+  })
+})

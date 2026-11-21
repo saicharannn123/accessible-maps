@@ -9,8 +9,14 @@ export const PILOT_CITY = {
 // Free, keyless map style (OpenFreeMap, built on OpenStreetMap data).
 export const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
 
-// Free, keyless geocoder built on OpenStreetMap.
+// Free, keyless geocoder built on OpenStreetMap. Its /reverse endpoint also finds the
+// nearest places of a type (cafés, pharmacies...), which is fast even when Overpass is busy.
 export const GEOCODER_URL = 'https://photon.komoot.io/api/'
+export const PHOTON_REVERSE_URL = 'https://photon.komoot.io/reverse'
+
+// The main OpenStreetMap API, used only to read the full details (opening hours, phone,
+// wheelchair...) of the few dozen places found nearby.
+export const OSM_API_URL = 'https://api.openstreetmap.org/api/0.6'
 
 // The website's name, shown in the header and browser tab.
 export const APP_NAME = 'BM Locator'
@@ -20,6 +26,7 @@ export const APP_NAME = 'BM Locator'
 export const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
 ]
 export const OVERPASS_URL = OVERPASS_URLS[0]
 
