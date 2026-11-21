@@ -6,8 +6,14 @@ export const PILOT_CITY = {
   zoom: 15,
 }
 
-// Free, keyless map style (OpenFreeMap, built on OpenStreetMap data).
-export const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
+// Free, keyless map styles (OpenFreeMap, built on OpenStreetMap data).
+export const MAP_STYLES = {
+  liberty: { label: 'Standard', url: 'https://tiles.openfreemap.org/styles/liberty' },
+  bright: { label: 'Bright', url: 'https://tiles.openfreemap.org/styles/bright' },
+  positron: { label: 'Light', url: 'https://tiles.openfreemap.org/styles/positron' },
+} as const
+export type MapStyleId = keyof typeof MAP_STYLES
+export const MAP_STYLE_URL = MAP_STYLES.liberty.url
 
 // Free, keyless geocoder built on OpenStreetMap. Its /reverse endpoint also finds the
 // nearest places of a type (cafés, pharmacies...), which is fast even when Overpass is busy.

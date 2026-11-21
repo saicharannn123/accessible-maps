@@ -57,3 +57,14 @@ describe('photon results', () => {
     expect(places[1]).toMatchObject({ id: 'way/6', name: 'Leaf', wheelchair: 'unknown' })
   })
 })
+
+describe('worldview', () => {
+  it('picks India for visitors in India and nothing for most others', async () => {
+    const { detectWorldview, solidFilter } = await import('../worldview')
+    expect(detectWorldview('Asia/Kolkata', ['en-US'])).toBe('IN')
+    expect(detectWorldview('America/New_York', ['hi-IN'])).toBe('IN')
+    expect(detectWorldview('America/New_York', ['en-US'])).toBeNull()
+    expect(detectWorldview('Europe/London', ['en-GB'])).toBeNull()
+    expect(JSON.stringify(solidFilter('IN'))).toContain('FCLASS_IN')
+  })
+})

@@ -1,7 +1,7 @@
 import type { Settings } from './types'
 
 const KEY = 'accessible-maps.settings'
-export const DEFAULT_SETTINGS: Settings = { profile: 'wheelchair', maxInclinePercent: 6 }
+export const DEFAULT_SETTINGS: Settings = { profile: 'wheelchair', maxInclinePercent: 6, worldview: 'auto', mapStyle: 'liberty' }
 
 export function loadSettings(): Settings {
   try {
@@ -12,5 +12,9 @@ export function loadSettings(): Settings {
 }
 
 export function saveSettings(s: Settings): void {
-  localStorage.setItem(KEY, JSON.stringify(s))
+  try {
+    localStorage.setItem(KEY, JSON.stringify(s))
+  } catch {
+    // Private browsing or blocked storage: settings just won't be remembered.
+  }
 }
