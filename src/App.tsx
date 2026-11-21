@@ -185,6 +185,7 @@ export default function App() {
   // Accessibility details (restrooms, lighting, steps) come from Overpass, which is slow and
   // rate-limited, so only load them on the tabs that show them, not while browsing Near me.
   const tabRef = useRef(tab)
+  const modeRef = useRef(settings.travelMode)
   const lastView = useRef<{ bbox: [number, number, number, number]; zoom: number } | null>(null)
   const onViewChange = useCallback((bbox: [number, number, number, number], zoom: number) => {
     const c: LngLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
@@ -192,7 +193,9 @@ export default function App() {
     lastView.current = { bbox, zoom }
     window.clearTimeout(viewTimer.current)
     viewCtrl.current?.abort()
-    if (tabRef.current === 'nearby' || tabRef.current === 'settings') {
+    // Restrooms, steps and curbs only matter on foot, so skip them for driving and cycling directions.
+    const onWheels = tabRef.current === 'route' && (modeRef.current === 'car' || modeRef.current === 'bike')
+    if (tabRef.current === 'nearby' || tabRef.current === 'settings' || onWheels) {
       setDetailNotice(null)
       return
     }
@@ -212,8 +215,9 @@ export default function App() {
 
   useEffect(() => {
     tabRef.current = tab
+    modeRef.current = settings.travelMode
     if (lastView.current) onViewChange(lastView.current.bbox, lastView.current.zoom)
-  }, [tab, onViewChange])
+  }, [tab, settings.travelMode, onViewChange])
 
   const onMapClick = useCallback((c: LngLat) => {
     if (pick === 'from') setFrom(pinnedPlace(c))
