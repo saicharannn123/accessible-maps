@@ -504,7 +504,7 @@ export default function App() {
               <ol className="trip-points">
                 <li>
                   <span className="trip-dot start" aria-hidden="true" />
-                  <SearchBox label="Start" hideLabel value={fromPlace}
+                  <SearchBox label="Start" hideLabel value={fromPlace} near={searchCenter}
                     placeholder={loc.status === 'asking' ? 'Finding your location…' : 'Choose a starting point'}
                     onSelect={(p) => { setFrom(p); if (p) setFlyTo(p.coords) }}
                     extraOptions={[{ label: 'Use my location', onPick: useMyLocation }, { label: 'Pick on map', onPick: () => setPick('from') }]} />
@@ -513,7 +513,7 @@ export default function App() {
                   <li key={st.id}>
                     <span className="trip-dot stop" aria-hidden="true">{i + 1}</span>
                     <SearchBox label={`Stop ${i + 1}`} hideLabel value={st.place} placeholder={`Add stop ${i + 1}`}
-                      near={fromPlace?.coords}
+                      near={fromPlace?.coords ?? searchCenter}
                       onSelect={(p) => { setStop(st.id, p); if (p) setFlyTo(p.coords) }}
                       extraOptions={[{ label: 'Pick on map', onPick: () => setPick(`stop-${st.id}`) }]} />
                     <button type="button" className="icon-btn" aria-label={`Remove stop ${i + 1}`} onClick={() => removeStop(st.id)}>✕</button>
@@ -522,7 +522,7 @@ export default function App() {
                 <li>
                   <span className="trip-dot end" aria-hidden="true" />
                   <SearchBox label="Destination" hideLabel value={to} placeholder="Choose a destination"
-                    near={fromPlace?.coords}
+                    near={fromPlace?.coords ?? searchCenter}
                     onSelect={(p) => { setTo(p); if (p) setFlyTo(p.coords) }}
                     extraOptions={[{ label: 'Pick on map', onPick: () => setPick('to') }]} />
                 </li>
