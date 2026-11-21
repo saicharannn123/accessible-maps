@@ -217,9 +217,8 @@ section h2 { font-size: 1rem; margin: 8px 0 0; }
 .trip-pin.start { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 4px solid #15803d; }
 .trip-pin.stop { width: 22px; height: 22px; border-radius: 50%; background: #f59e0b; border: 2px solid #fff; color: #fff;
   font: 700 12px/18px system-ui, sans-serif; text-align: center; }
-.trip-pin.end { width: 26px; height: 26px; background: #dc2626; border: 2px solid #fff; border-radius: 50% 50% 50% 0;
-  transform-origin: center; rotate: -45deg; margin-bottom: 4px; }
-.trip-pin.end::after { content: ''; position: absolute; inset: 7px; border-radius: 50%; background: #fff; }
+.trip-pin.end { width: 28px; height: 38px; box-shadow: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+.trip-pin.end svg { display: block; }
 
 /* Right-click / long-press menu. */
 .map-menu { position: absolute; z-index: 30; min-width: 210px; background: #fff; border-radius: 12px; padding: 6px;
