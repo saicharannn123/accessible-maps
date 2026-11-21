@@ -5,6 +5,7 @@ import { APP_NAME, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS } from './config'
 import { bboxOf, distanceMeters, formatDistance, formatDuration } from './lib/geo'
 import { fetchAccessData, type AccessData } from './lib/overpass'
 import { openStatus } from './lib/hours'
+import { locationHelp, useLiveLocation } from './lib/useLiveLocation'
 import { CATEGORIES, CATEGORY_BY_ID, fetchNearby, type NearbyPlace } from './lib/places'
 import { loadReports, saveReports, timeAgo } from './lib/reports'
 import { planRoute } from './lib/routing'
@@ -25,7 +26,6 @@ const WHEELCHAIR_TEXT: Record<NearbyPlace['wheelchair'], string> = {
   unknown: 'Wheelchair access unknown',
 }
 
-type LocStatus = 'asking' | 'found' | 'unavailable'
 interface Nearby {
   category: string | null
   radius: number
@@ -40,8 +40,10 @@ function pinnedPlace(c: LngLat, name = 'Dropped pin'): Place {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('nearby')
-  const [myLocation, setMyLocation] = useState<LngLat | null>(null)
-  const [locStatus, setLocStatus] = useState<LocStatus>('asking')
+  const loc = useLiveLocation()
+  const myLocation = loc.position
+  // Keep the map on the visitor while they move, until they pan away themselves.
+  const [follow, setFollow] = useState(true)
   const [mapCenter, setMapCenter] = useState<LngLat>(PILOT_CITY.center)
   const [nearby, setNearby] = useState<Nearby>({ category: null, radius: 1000, center: null, places: [], status: 'idle' })
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -85,21 +87,11 @@ export default function App() {
     if (profile === 'night') setLayers((l) => ({ ...l, lighting: true }))
   }
 
-  const locate = useCallback((fly: boolean) => {
-    if (!navigator.geolocation) { queueMicrotask(() => setLocStatus('unavailable')); return }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const c: LngLat = [pos.coords.longitude, pos.coords.latitude]
-        setMyLocation(c); setLocStatus('found')
-        if (fly) setFlyTo(c)
-      },
-      () => setLocStatus('unavailable'),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-    )
-  }, [])
-
-  // "Near me" needs to know where you are, so ask once when the site opens.
-  useEffect(() => { locate(true) }, [locate])
+  const locateMe = () => {
+    setFollow(true)
+    if (myLocation) setFlyTo([...myLocation] as LngLat)
+    if (loc.status !== 'live') loc.start()
+  }
 
   const searchNearby = useCallback((category: string, radius: number, center: LngLat) => {
     const cat = CATEGORY_BY_ID[category]
@@ -154,7 +146,8 @@ export default function App() {
 
   const directionsTo = (p: NearbyPlace) => {
     setTo({ name: p.name, detail: p.address ?? p.kind, coords: p.coords })
-    if (myLocation) setFrom(pinnedPlace(myLocation, 'My location'))
+    setFrom(null) // start from wherever you are
+    if (loc.status !== 'live') loc.start()
     setTab('route')
   }
 
@@ -186,17 +179,12 @@ export default function App() {
     setPick(null)
   }, [pick, tab])
 
+  // With no start chosen, Directions start from wherever you are right now.
   const useMyLocation = () => {
-    if (!navigator.geolocation) { setRouteError('Location is not available in this browser'); return }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const c: LngLat = [pos.coords.longitude, pos.coords.latitude]
-        setMyLocation(c); setLocStatus('found')
-        setFrom(pinnedPlace(c, 'My location'))
-      },
-      () => setRouteError('Could not get your location. Search for a start point instead.'),
-    )
+    setFrom(null)
+    if (loc.status !== 'live') loc.start()
   }
+  const fromPlace: Place | null = from ?? (myLocation ? pinnedPlace(myLocation, 'My location') : null)
 
   const loadRouteAccess = useCallback(async (line: LngLat[]) => {
     const [w, s, e, n] = bboxOf(line)
@@ -207,17 +195,16 @@ export default function App() {
   }, [])
 
   // A route belongs to one trip; changing the start, end or profile hides the old one.
-  const tripKey = JSON.stringify([from?.coords, to?.coords, settings.profile, settings.maxInclinePercent])
+  const tripKey = JSON.stringify([from ? from.coords : myLocation ? 'me' : null, to?.coords, settings.profile, settings.maxInclinePercent])
   const route = routeState.key === tripKey ? routeState.route : null
   const routeError = routeState.key === tripKey ? routeState.error : null
-  const setRouteError = (error: string) => setRouteState({ key: tripKey, route: null, error })
 
   const findRoute = async () => {
-    if (!from || !to) return
+    if (!fromPlace || !to) return
     const key = tripKey
     setRouting(true); setRouteState({ key, route: null, error: null })
     try {
-      setRouteState({ key, route: await planRoute(from.coords, to.coords, settings, loadRouteAccess, reports), error: null })
+      setRouteState({ key, route: await planRoute(fromPlace.coords, to.coords, settings, loadRouteAccess, reports), error: null })
     } catch (e) {
       setRouteState({ key, route: null, error: e instanceof Error ? e.message : 'Routing failed' })
     } finally {
@@ -258,6 +245,9 @@ export default function App() {
         places={tab === 'nearby' ? shownPlaces : selected ? [selected] : []}
         selectedPlaceId={selectedId}
         myLocation={myLocation}
+        myAccuracy={loc.accuracy}
+        follow={follow && loc.status === 'live'}
+        onUserMove={() => setFollow(false)}
         fitTo={fitTo}
         onPlaceClick={selectPlace}
         onMapClick={onMapClick}
@@ -273,7 +263,7 @@ export default function App() {
         ))}
       </div>}
 
-      <button type="button" className="locate-btn" aria-label="Show my location" title="Show my location" onClick={() => { setLocStatus('asking'); locate(true) }}>
+      <button type="button" className="locate-btn" aria-label="Show my location" title="Show my location" onClick={locateMe}>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" strokeWidth="2" /></svg>
       </button>
 
@@ -285,6 +275,19 @@ export default function App() {
 
       {(pickHint || detailNotice) && tab !== 'nearby' && <div className="toast" role="status">{pickHint ?? detailNotice}</div>}
 
+      {loc.status === 'prompt' && (
+        <div className="loc-modal-backdrop">
+          <div className="loc-modal" role="dialog" aria-modal="true" aria-labelledby="loc-title">
+            <div className="loc-modal-icon" aria-hidden="true">📍</div>
+            <h2 id="loc-title">Turn on your location</h2>
+            <p>{APP_NAME} uses your location to show restaurants, coffee, shops and more near you, keep the map following you as you walk, and start directions from where you are.</p>
+            <p className="muted small">Your location stays in your browser. It isn't saved or shared.</p>
+            <button type="button" className="primary" autoFocus onClick={loc.start}>Use my location</button>
+            <button type="button" className="link center" onClick={loc.dismiss}>Not now</button>
+          </div>
+        </div>
+      )}
+
       <aside className={`panel ${sheetOpen ? 'open' : 'closed'}`}>
         <button type="button" className="sheet-handle" onClick={() => setSheetOpen((o) => !o)} aria-label={sheetOpen ? 'Hide panel' : 'Show panel'} />
         <div className="panel-scroll" ref={panelScroll}>
@@ -292,6 +295,8 @@ export default function App() {
           <h1><span className="logo" aria-hidden="true">📍</span> {APP_NAME}</h1>
           <p className="sub">Find places near you, with step-free walking directions</p>
         </header>
+
+        <LocationNotice status={loc.status} onRetry={loc.start} />
 
         <nav className="tabs" role="tablist">
           {(['nearby', 'route', 'report', 'settings'] as const).map((t) => (
@@ -314,9 +319,9 @@ export default function App() {
                 if (nearby.category) searchNearby(nearby.category, nearby.radius, p.coords)
               }} />
             <p className="muted small loc-line">
-              {locStatus === 'found' && myLocation ? '📍 Showing places near your location'
-                : locStatus === 'asking' ? 'Finding your location…'
-                : <>Location is off, so places near the map center are shown. <button type="button" className="link" onClick={() => { setLocStatus('asking'); locate(true) }}>Try again</button></>}
+              {loc.status === 'live' ? '📍 Showing places near your live location'
+                : loc.status === 'asking' || loc.status === 'checking' ? 'Finding your location…'
+                : <>Location is off, so places near the map center are shown. <button type="button" className="link" onClick={loc.start}>Turn on location</button></>}
             </p>
             <div className="cat-grid" role="group" aria-label="Categories">
               {CATEGORIES.filter((c, i) => moreCats || i < 7 || c.id === nearby.category).map((c) => (
@@ -409,7 +414,7 @@ export default function App() {
 
         {tab === 'route' && (
           <section>
-            <SearchBox label="From" placeholder="Search a start point" value={from}
+            <SearchBox label="From" placeholder={loc.status === 'asking' ? 'Finding your location…' : 'Search a start point'} value={fromPlace}
               onSelect={(p) => { setFrom(p); if (p) setFlyTo(p.coords) }}
               extraOptions={[{ label: 'Use my location', onPick: useMyLocation }, { label: 'Pick on map', onPick: () => setPick('from') }]} />
             <SearchBox label="To" placeholder="Search a destination" value={to}
@@ -423,7 +428,7 @@ export default function App() {
               </select>
             </div>
 
-            <button type="button" className="primary" disabled={!from || !to || routing} onClick={findRoute}>
+            <button type="button" className="primary" disabled={!fromPlace || !to || routing} onClick={findRoute}>
               {routing ? 'Finding a route…' : 'Find step-free route'}
             </button>
             {routeError && <p className="error" role="alert">{routeError}</p>}
@@ -547,4 +552,36 @@ function OpenLine({ status, compact = false }: { status: ReturnType<typeof openS
       {status.detail !== 'Closed' && <> · {status.detail}</>}
     </Tag>
   )
+}
+
+function LocationNotice({ status, onRetry }: { status: ReturnType<typeof useLiveLocation>['status']; onRetry: () => void }) {
+  if (status === 'denied') {
+    const help = locationHelp()
+    return (
+      <div className="loc-notice" role="alert">
+        <strong>Location is blocked for this site</strong>
+        <p>{help.browser}</p>
+        {help.device && <p className="muted small">{help.device}</p>}
+        <button type="button" className="link" onClick={() => window.location.reload()}>Reload page</button>
+      </div>
+    )
+  }
+  if (status === 'unsupported') {
+    return (
+      <div className="loc-notice" role="alert">
+        <strong>This browser can't share your location</strong>
+        <p>Open this page in Chrome, Edge, Safari or Firefox to use your live location. In-app browsers often can't.</p>
+      </div>
+    )
+  }
+  if (status === 'unavailable') {
+    return (
+      <div className="loc-notice soft" role="status">
+        <strong>Location is off</strong>
+        <p>Turn it on to see places near you and start directions from where you are. Some built-in app browsers can't share location; if nothing happens, open this page in Chrome, Edge or Safari.</p>
+        <button type="button" className="primary small-btn" onClick={onRetry}>Use my location</button>
+      </div>
+    )
+  }
+  return null
 }
