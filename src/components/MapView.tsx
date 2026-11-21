@@ -47,6 +47,8 @@ interface Props {
   /** Whose place names to show (e.g. US: "Gulf of America"); null = neutral. */
   nameView: string | null
   mapStyle: MapStyleId
+  /** Units for the scale bar. */
+  units: 'km' | 'mi'
   /** Points the camera should frame, e.g. a list of nearby results. */
   fitTo: { points: LngLat[]; key: number } | null
   onPlaceClick: (id: string) => void
@@ -85,7 +87,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, nameView, mapStyle } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -116,6 +118,9 @@ export function MapView(props: Props) {
       // Category pins are drawn on demand, so they survive switching the map look.
       map.on('styleimagemissing', (e) => addCategoryIcon(map, e.id))
       map.addControl(new maplibregl.NavigationControl(), 'top-right')
+      const scale = new maplibregl.ScaleControl({ unit: unitsRef.current === 'mi' ? 'imperial' : 'metric' })
+      scaleRef.current = scale
+      map.addControl(scale, 'bottom-right')
 
       const emitView = () => {
         const b = map.getBounds()
@@ -229,6 +234,13 @@ export function MapView(props: Props) {
     const map = mapRef.current
     if (ready && map) applyBorders(map, worldview)
   }, [worldview, ready])
+
+  const unitsRef = useRef(units)
+  const scaleRef = useRef<maplibregl.ScaleControl | null>(null)
+  useEffect(() => {
+    unitsRef.current = units
+    scaleRef.current?.setUnit(units === 'mi' ? 'imperial' : 'metric')
+  }, [units])
 
   const nameViewRef = useRef(nameView)
   useEffect(() => {

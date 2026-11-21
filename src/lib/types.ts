@@ -73,4 +73,6 @@ export interface Settings {
   mapLook: import('../config').MapStyleId
   /** Travel mode for directions, remembered between visits. */
   travelMode: TravelMode
+  /** Distance units: 'auto' picks miles in the US and UK, kilometers elsewhere. */
+  units: 'auto' | import('./geo').DistanceUnits
 }

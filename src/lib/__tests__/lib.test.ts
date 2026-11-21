@@ -5,7 +5,7 @@ import { findWarnings, orsRequest, osrmUrl } from '../routing'
 import type { LngLat, Settings } from '../types'
 
 const line: LngLat[] = [[-122.3400, 47.6000], [-122.3300, 47.6000]]
-const wheelchair: Settings = { profile: 'wheelchair', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible' }
+const wheelchair: Settings = { profile: 'wheelchair', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible', units: 'km' }
 
 describe('geo', () => {
   it('measures distances', () => {
@@ -36,10 +36,10 @@ describe('overpass', () => {
 
 describe('routing', () => {
   it('maps profiles to OpenRouteService options', () => {
-    const w = orsRequest([[0, 0], [1, 1]], { profile: 'wheelchair', maxInclinePercent: 5, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible' })
+    const w = orsRequest([[0, 0], [1, 1]], { profile: 'wheelchair', maxInclinePercent: 5, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible', units: 'km' })
     expect(w.profile).toBe('wheelchair')
     expect(w.body.options).toMatchObject({ profile_params: { restrictions: { maximum_incline: 6 } } })
-    expect(orsRequest([[0, 0], [1, 1]], { profile: 'cane', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible' }).body.options).toEqual({ avoid_features: ['steps'] })
+    expect(orsRequest([[0, 0], [1, 1]], { profile: 'cane', maxInclinePercent: 6, worldview: 'auto', mapLook: 'clean', travelMode: 'accessible', units: 'km' }).body.options).toEqual({ avoid_features: ['steps'] })
   })
 
   it('warns about steps, reports and unverified routes', () => {
