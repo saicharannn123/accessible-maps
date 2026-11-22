@@ -19,6 +19,12 @@ import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, S
 type Tab = 'nearby' | 'route' | 'report' | 'settings'
 type Pick = 'from' | 'to' | 'report' | `stop-${number}` | null
 const MAX_STOPS = 5
+const TAB_INFO: Record<Tab, { icon: string; label: string; title: string }> = {
+  nearby: { icon: '🧭', label: 'Explore', title: "What's around you" },
+  route: { icon: '🚶', label: 'Go', title: 'Plan your trip' },
+  report: { icon: '⚠️', label: 'Report', title: 'Flag a barrier' },
+  settings: { icon: '⚙️', label: 'Settings', title: 'Make it yours' },
+}
 
 const MIN_DETAIL_ZOOM = 14
 // Below this many results we automatically look further out, like big map apps do.
@@ -453,14 +459,30 @@ export default function App() {
         onViewChange={onViewChange}
       />
 
-      {tab !== 'nearby' && <div className="layer-toggles" role="group" aria-label="Map layers">
-        {(['restrooms', 'lighting', 'obstacles', 'reports'] as const).map((k) => (
-          <button key={k} type="button" aria-pressed={layers[k]} className={layers[k] ? 'on' : ''}
-            onClick={() => setLayers((l) => ({ ...l, [k]: !l[k] }))}>
-            {{ restrooms: 'Restrooms', lighting: 'Lighting', obstacles: 'Steps & curbs', reports: 'Reports' }[k]}
+      <div className="topbar">
+        <div className="brand"><span className="brand-mark" aria-hidden="true">📍</span><span className="brand-name">{APP_NAME}</span><span className="brand-tag">step-free first</span></div>
+        {tab !== 'nearby' && <div className="layer-toggles" role="group" aria-label="Map layers">
+          {(['restrooms', 'lighting', 'obstacles', 'reports'] as const).map((k) => (
+            <button key={k} type="button" aria-pressed={layers[k]} className={layers[k] ? 'on' : ''}
+              onClick={() => setLayers((l) => ({ ...l, [k]: !l[k] }))}>
+              {{ restrooms: '🚻 Restrooms', lighting: '💡 Lighting', obstacles: '🪜 Steps & curbs', reports: '⚠️ Reports' }[k]}
+            </button>
+          ))}
+        </div>}
+      </div>
+
+      <nav className="dock" role="tablist" aria-label="Sections">
+        {(['nearby', 'route', 'report', 'settings'] as const).map((t) => (
+          <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => {
+            setTab(t); setPick(null); setSheetOpen(true)
+            // Directions start from where you are, so ask for location as soon as they're opened.
+            if (t === 'route' && (loc.status === 'prompt' || loc.status === 'unavailable')) loc.start()
+          }}>
+            <span className="dock-icon" aria-hidden="true">{TAB_INFO[t].icon}</span>
+            <span className="dock-label">{TAB_INFO[t].label}</span>
           </button>
         ))}
-      </div>}
+      </nav>
 
       <button type="button" className="locate-btn" aria-label="Show my location" title="Show my location" onClick={locateMe}>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" strokeWidth="2" /></svg>
@@ -499,24 +521,12 @@ export default function App() {
       <aside className={`panel ${sheetOpen ? 'open' : 'closed'}`}>
         <button type="button" className="sheet-handle" onClick={() => setSheetOpen((o) => !o)} aria-label={sheetOpen ? 'Hide panel' : 'Show panel'} />
         <div className="panel-scroll" ref={panelScroll}>
-        <header>
-          <h1><span className="logo" aria-hidden="true">📍</span> {APP_NAME}</h1>
-          <p className="sub">Find places near you, with step-free walking directions</p>
+        <header className="panel-head">
+          <span className="panel-kicker">{TAB_INFO[tab].icon} {TAB_INFO[tab].label}</span>
+          <h1>{TAB_INFO[tab].title}</h1>
         </header>
 
         <LocationNotice status={loc.status} onRetry={loc.start} />
-
-        <nav className="tabs" role="tablist">
-          {(['nearby', 'route', 'report', 'settings'] as const).map((t) => (
-            <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => {
-              setTab(t); setPick(null)
-              // Directions start from where you are, so ask for location as soon as they're opened.
-              if (t === 'route' && (loc.status === 'prompt' || loc.status === 'unavailable')) loc.start()
-            }}>
-              {{ nearby: 'Near me', route: 'Directions', report: 'Report', settings: 'Settings' }[t]}
-            </button>
-          ))}
-        </nav>
 
         {tab === 'nearby' && (
           <section>
