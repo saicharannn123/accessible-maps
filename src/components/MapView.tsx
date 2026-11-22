@@ -206,7 +206,7 @@ export function MapView(props: Props) {
         map.addLayer({ id: 'famous', type: 'symbol', source: 'famous',
           layout: {
             'icon-image': ['concat', 'fam-', ['get', 'icon']],
-            'icon-size': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 0.8, 12, 0.9],
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 3, 0.85, 8, 1, 12, 1.1],
             'text-field': ['get', 'name'],
             'text-font': ['Noto Sans Bold'],
             'text-size': ['interpolate', ['linear'], ['zoom'], 3, 11, 10, 13],
