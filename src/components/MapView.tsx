@@ -7,7 +7,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { MAP_STYLES, PILOT_CITY, type MapStyleId } from '../config'
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
-import { cleanStyle } from '../lib/cleanStyle'
+import { cleanStyle, signatureStyle } from '../lib/cleanStyle'
 import { renameExpression } from '../lib/placeNames'
 import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
@@ -292,7 +292,7 @@ export function MapView(props: Props) {
     styleRef.current = mapStyle
     const look = mapStyle
     map.setStyle(MAP_STYLES[look].url, {
-      transformStyle: (prev, next) => carryOverAppLayers(prev, look === 'clean' ? safeClean(next) : next),
+      transformStyle: (prev, next) => carryOverAppLayers(prev, safeRestyle(look, next)),
     })
     map.once('style.load', () => {
       ORIGINAL_TEXT.delete(map) // new style, new labels
@@ -539,14 +539,18 @@ function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpe
   return { ...next, sources, layers }
 }
 
-/** The style to open with: a URL, or for our own Clean look the restyled style JSON. */
+// Our own looks are restyles of a base style; the others load as published.
+const RESTYLES: Partial<Record<MapStyleId, (s: StyleSpecification) => StyleSpecification>> = { clean: cleanStyle, signature: signatureStyle }
+
+/** The style to open with: a URL, or for our own looks the restyled style JSON. */
 async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecification> {
   const url = MAP_STYLES[look].url
-  if (look !== 'clean') return url
+  const restyle = RESTYLES[look]
+  if (!restyle) return url
   try {
     const res = await fetch(url)
     if (!res.ok) throw new Error(String(res.status))
-    const style = cleanStyle(await res.json())
+    const style = restyle(await res.json())
     // Never let a restyle mistake blank the whole map: fall back to the plain style.
     const errors = validateStyleMin(style)
     if (errors.length) throw new Error(errors[0].message)
@@ -556,8 +560,10 @@ async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecificat
   }
 }
 
-function safeClean(style: StyleSpecification): StyleSpecification {
-  const styled = cleanStyle(style)
+function safeRestyle(look: MapStyleId, style: StyleSpecification): StyleSpecification {
+  const restyle = RESTYLES[look]
+  if (!restyle) return style
+  const styled = restyle(style)
   return validateStyleMin(styled).length ? style : styled
 }
 
