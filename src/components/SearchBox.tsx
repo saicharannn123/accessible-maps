@@ -28,6 +28,8 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
   const [error, setError] = useState<string | null>(null)
+  /** Bumped to search again (automatic retries and the Try again button). */
+  const [attempt, setAttempt] = useState(0)
   const nearRef = useRef(near)
   const enterPending = useRef(false)
   const onSelectRef = useRef(onSelect)
@@ -57,6 +59,7 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
   useEffect(() => {
     if (!wantSearch) return
     const ctrl = new AbortController()
+    let retry: number | undefined
     const timer = window.setTimeout(() => {
       searchAll(query, ctrl.signal, nearRef.current)
         .then((r) => {
@@ -73,12 +76,21 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
               .catch(() => {})
           }
         })
-        .catch((e) => { if (e.name !== 'AbortError') setError('Search is unavailable right now. Try again in a moment.') })
-    }, 250)
-    return () => { window.clearTimeout(timer); ctrl.abort() }
+        .catch((e) => {
+          if (e.name === 'AbortError') return
+          // Every source failed. Keep trying quietly a few times before asking you to.
+          if (attempt < 3) {
+            setError('retrying')
+            retry = window.setTimeout(() => setAttempt((a) => a + 1), 1500 * 2 ** attempt)
+          } else {
+            setError('offline')
+          }
+        })
+    }, attempt ? 0 : 250)
+    return () => { window.clearTimeout(timer); window.clearTimeout(retry); ctrl.abort() }
     // choose only uses refs and setters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, wantSearch])
+  }, [query, wantSearch, attempt])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -89,7 +101,10 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (places.length) choose(places[Math.max(active, 0)])
-      else if (query.length >= 2) { enterPending.current = true; setOpen(true) }
+      else if (query.length >= 2) {
+        enterPending.current = true; setOpen(true)
+        if (error === 'offline') { setError('retrying'); setAttempt((a) => a + 1) }
+      }
     } else if (e.key === 'Escape') {
       setOpen(false)
     }
@@ -113,7 +128,7 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
           onBlur={() => window.setTimeout(() => { setOpen(false); enterPending.current = false }, 150)}
           onKeyDown={onKeyDown}
           onChange={(e) => {
-            setText(e.target.value); setOpen(true); setActive(-1); setError(null)
+            setText(e.target.value); setOpen(true); setActive(-1); setError(null); setAttempt(0)
             if (!e.target.value) onSelect(null)
           }}
         />
@@ -127,7 +142,14 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
               </button>
             </li>
           ))}
-          {error && <li className="search-error">{error}</li>}
+          {error === 'retrying' && <li className="search-note" aria-live="polite">Search is slow right now. Still trying…</li>}
+          {error === 'offline' && (
+            <li className="search-note search-offline" aria-live="polite">
+              <span>Can't reach the map search at the moment. Check your connection, or try again.</span>
+              <button type="button" className="secondary" onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { setError('retrying'); setAttempt((a) => a + 1) }}>Try again</button>
+            </li>
+          )}
           {loading && <li className="search-note" aria-live="polite">Searching…</li>}
           {wantSearch && !loading && !error && places.length === 0 && (
             <li className="search-note">No matches near you. Check the spelling or try a street, town or business name.</li>
