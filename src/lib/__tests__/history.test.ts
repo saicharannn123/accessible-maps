@@ -11,6 +11,10 @@ describe('history', () => {
   it('keeps the same name at a different spot', () => {
     expect(addHistory(addHistory([], place('Walmart', 0)), place('Walmart', 1))).toHaveLength(2)
   })
+  it('drops the stale distance from search details', () => {
+    const [first] = addHistory([], { kind: 'place', place: { name: 'Walmart', detail: '7.5 mi · 235 Ridgedale Avenue', coords: [0, 0] } })
+    expect(first.kind === 'place' && first.place.detail).toBe('235 Ridgedale Avenue')
+  })
   it('caps the list', () => {
     let list: HistoryItem[] = []
     for (let i = 0; i < 30; i++) list = addHistory(list, place(`P${i}`, i))
