@@ -33,7 +33,12 @@ interface Props {
   /** Stops along the way, in order. */
   stops: LngLat[]
   layers: Layers
-  flyTo: LngLat | null
+  /** Move the camera here; keepZoom leaves the zoom as it is (e.g. after tapping the map). */
+  flyTo: { at: LngLat; keepZoom?: boolean } | null
+  /** A plain red pin: the place picked in search, or where a report goes. */
+  markPin: LngLat | null
+  /** Tapping the map drops a pin, so show a crosshair cursor. */
+  pickMode: boolean
   places: NearbyPlace[]
   selectedPlaceId: string | null
   myLocation: LngLat | null
@@ -91,7 +96,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -216,7 +221,7 @@ export function MapView(props: Props) {
         })
         for (const id of ['restrooms', 'reports', 'places']) {
           map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
-          map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '' })
+          map.on('mouseleave', id, () => { map.getCanvas().style.cursor = pickModeRef.current ? 'crosshair' : '' })
         }
         setReady(true)
         emitView()
@@ -349,7 +354,7 @@ export function MapView(props: Props) {
       if (typeof role === 'number') el.textContent = String(role + 1)
       // A drawn pin, not a rotated box: rotating the marker element would also rotate MapLibre's
       // positioning transform and throw the pin off the map.
-      if (role === 'to') el.innerHTML = '<svg width="28" height="38" viewBox="0 0 28 38" aria-hidden="true"><path d="M14 37s12-13.2 12-22.5A12 12 0 0 0 2 14.5C2 23.8 14 37 14 37z" fill="#dc2626" stroke="#fff" stroke-width="2"/><circle cx="14" cy="14.5" r="4.5" fill="#fff"/></svg>'
+      if (role === 'to') el.innerHTML = PIN_SVG
       el.title = role === 'from' ? 'Start (drag to move)' : role === 'to' ? 'Destination (drag to move)' : `Stop ${role + 1} (drag to move)`
       const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: role === 'to' ? 'bottom' : 'center' })
         .setLngLat(at)
@@ -417,14 +422,36 @@ export function MapView(props: Props) {
   }, [fitTo, ready])
 
   useEffect(() => {
-    if (!flyTo) return
+    const map = mapRef.current
+    if (!flyTo || !map) return
     // On phones the bottom sheet covers the lower part of the map, so aim above it.
     const offset: [number, number] = window.innerWidth <= 720 ? [0, -Math.round(window.innerHeight * 0.28)] : [196, 0]
-    mapRef.current?.flyTo({ center: flyTo, zoom: Math.max(mapRef.current.getZoom(), 15), offset })
+    if (flyTo.keepZoom) map.easeTo({ center: flyTo.at, offset, duration: 600 })
+    else map.flyTo({ center: flyTo.at, zoom: Math.max(map.getZoom(), 15), offset })
   }, [flyTo])
+
+  const pickModeRef = useRef(pickMode)
+  useEffect(() => {
+    pickModeRef.current = pickMode
+    const canvas = mapRef.current?.getCanvas()
+    if (canvas) canvas.style.cursor = pickMode ? 'crosshair' : ''
+  }, [pickMode, ready])
+
+  // The search / report pin.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map || !markPin) return
+    const el = document.createElement('div')
+    el.className = 'trip-pin end mark-pin'
+    el.innerHTML = PIN_SVG
+    const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(markPin).addTo(map)
+    return () => { marker.remove() }
+  }, [markPin, ready])
 
   return <div ref={container} className="map" aria-label="Map" />
 }
+
+const PIN_SVG = '<svg width="28" height="38" viewBox="0 0 28 38" aria-hidden="true"><path d="M14 37s12-13.2 12-22.5A12 12 0 0 0 2 14.5C2 23.8 14 37 14 37z" fill="#dc2626" stroke="#fff" stroke-width="2"/><circle cx="14" cy="14.5" r="4.5" fill="#fff"/></svg>'
 
 const BASE_BORDER_LAYERS = ['boundary_2', 'boundary_disputed']
 const WV_SOURCE = 'ne-borders'
