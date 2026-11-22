@@ -23,6 +23,8 @@ export function sameItem(a: HistoryEntry, b: HistoryEntry): boolean {
 
 /** Put the entry first (stamped now), dropping an older copy of it and anything past the limit. */
 export function addHistory(list: HistoryItem[], entry: HistoryEntry, at = Date.now()): HistoryItem[] {
+  // Search details start with the distance from where you were ("7.5 mi · …"), which goes stale.
+  if (entry.kind === 'place') entry = { ...entry, place: { ...entry.place, detail: entry.place.detail.replace(/^[\d.,]+\s?(mi|km|ft|m)\s·\s/, '') } }
   return [{ ...entry, at }, ...list.filter((x) => !sameItem(x, entry))].slice(0, MAX_HISTORY)
 }
 
