@@ -9,6 +9,7 @@ import { openStatus } from './lib/hours'
 import { locationHelp, useLiveLocation } from './lib/useLiveLocation'
 import { CATEGORIES, CATEGORY_BY_ID, fetchNearby, type NearbyPlace } from './lib/places'
 import { loadReports, saveReports, timeAgo } from './lib/reports'
+import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
 import { reverseGeocode } from './lib/geocode'
 import { loadSettings, saveSettings } from './lib/settings'
@@ -117,6 +118,9 @@ export default function App() {
 
   useEffect(() => saveSettings(settings), [settings])
   useEffect(() => saveReports(reports), [reports])
+  const [history, setHistory] = useState<HistoryItem[]>(loadHistory)
+  useEffect(() => saveHistory(history), [history])
+  const remember = useCallback((entry: HistoryEntry) => setHistory((h) => addHistory(h, entry)), [])
 
   const setProfile = (profile: MobilityProfile) => {
     setSettings((s) => ({ ...s, profile }))
@@ -169,6 +173,7 @@ export default function App() {
       return
     }
     searchNearby(id, nearby.radius, searchCenter)
+    remember({ kind: 'category', category: id })
   }
 
   const statusById = useMemo(
@@ -186,11 +191,18 @@ export default function App() {
   const movedAway = userPanned && nearby.status === 'done' && nearby.category != null && !selected &&
     distanceMeters(nearby.center ?? mapCenter, mapCenter) > Math.max(300, Math.min(nearby.radius, 2000) * 0.5)
 
+  // Opening a place's card adds it to Recent.
+  const placesRef = useRef<NearbyPlace[]>([])
+  useEffect(() => { placesRef.current = nearby.places })
+  const rememberPlace = useCallback((p: NearbyPlace | undefined) => {
+    if (p) remember({ kind: 'place', place: { name: p.name, detail: p.address ?? p.kind, coords: p.coords } })
+  }, [remember])
   const selectPlace = useCallback((id: string) => {
+    rememberPlace(placesRef.current.find((p) => p.id === id))
     setSelectedId(id)
     setTab('nearby')
     setSheetOpen(true)
-  }, [])
+  }, [rememberPlace])
 
   // Bring the place card into view when a place is picked from the list or the map.
   useEffect(() => { if (selectedId) panelScroll.current?.scrollTo({ top: 0 }) }, [selectedId])
@@ -361,6 +373,8 @@ export default function App() {
     try {
       const points = [fromPlace.coords, ...stopPlaces.map((p) => p.coords), to.coords]
       setRouteState({ key, route: await planRoute(points, settings, loadRouteAccess, reports), error: null })
+      // Skip the moment before a dropped pin gets its street name; the named trip is saved next.
+      if (to.name !== 'Dropped pin' && from?.name !== 'Dropped pin') remember({ kind: 'route', from, to, mode: settings.travelMode })
     } catch (e) {
       setRouteState({ key, route: null, error: e instanceof Error ? e.message : 'Routing failed' })
     } finally {
@@ -390,6 +404,19 @@ export default function App() {
 
   const pickHint = pick === 'from' ? 'Tap the map to set your start' : pick === 'to' ? 'Tap the map to set your destination'
     : pick?.startsWith('stop-') ? 'Tap the map to set this stop' : null
+
+  const openHistory = (h: HistoryItem) => {
+    remember({ ...h })
+    if (h.kind === 'place') {
+      setSelectedId(null); setSearchPin(h.place); setFollow(false); fly(h.place.coords)
+    } else if (h.kind === 'category') {
+      if (nearby.category !== h.category) searchNearby(h.category, nearby.radius, searchCenter)
+    } else {
+      setFrom(h.from); setTo(h.to); setStops([]); setTravelMode(h.mode)
+      if (!h.from && loc.status !== 'live') loc.start()
+      setTab('route')
+    }
+  }
 
   const routeStops = useMemo(() => stops.flatMap((st) => (st.place ? [st.place.coords] : [])), [stops])
   const mode = settings.travelMode
@@ -498,6 +525,7 @@ export default function App() {
               near={searchCenter}
               onSelect={(p) => {
                 if (!p) return
+                remember({ kind: 'place', place: p })
                 setSearchPin(p)
                 setSelectedId(null)
                 fly(p.coords)
@@ -593,7 +621,7 @@ export default function App() {
                   <ul className="results">
                     {shownPlaces.map((p) => (
                       <li key={p.id}>
-                        <button type="button" onClick={() => { setSelectedId(p.id); setFollow(false); fly(p.coords) }}>
+                        <button type="button" onClick={() => { rememberPlace(p); setSelectedId(p.id); setFollow(false); fly(p.coords) }}>
                           <span className="res-icon" style={{ background: CATEGORY_BY_ID[p.category]?.color }} aria-hidden="true">{CATEGORY_BY_ID[p.category]?.icon}</span>
                           <span className="res-text">
                             <strong>{p.name}</strong>
@@ -608,6 +636,34 @@ export default function App() {
                   </ul>
                 </>
               )
+            )}
+
+            {!selected && (
+              <div className="recent">
+                <div className="recent-head">
+                  <h2>Recent</h2>
+                  {history.length > 0 && <button type="button" className="link" onClick={() => setHistory([])}>Clear all</button>}
+                </div>
+                {history.length === 0
+                  ? <p className="muted small">Places you search for and trips you plan show up here.</p>
+                  : (
+                    <ul className="recent-list">
+                      {history.map((h) => {
+                        const look = historyLook(h)
+                        return (
+                          <li key={`${h.kind}-${h.at}`}>
+                            <button type="button" className="recent-open" onClick={() => openHistory(h)}>
+                              <span className="recent-icon" aria-hidden="true">{look.icon}</span>
+                              <span className="res-text"><strong>{look.title}</strong><span>{look.sub ? `${look.sub} · ` : ''}{timeAgo(h.at, now.getTime())}</span></span>
+                            </button>
+                            <button type="button" className="recent-remove" aria-label={`Remove ${look.title} from Recent`}
+                              onClick={() => setHistory((all) => all.filter((x) => x !== h))}>✕</button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+              </div>
             )}
           </section>
         )}
@@ -864,4 +920,13 @@ function LocationNotice({ status, onRetry }: { status: ReturnType<typeof useLive
     )
   }
   return null
+}
+
+function historyLook(h: HistoryItem): { icon: string; title: string; sub: string } {
+  if (h.kind === 'place') return { icon: '📍', title: h.place.name, sub: h.place.detail }
+  if (h.kind === 'category') {
+    const c = CATEGORY_BY_ID[h.category]
+    return { icon: c?.icon ?? '🔎', title: `${c?.label ?? h.category} near you`, sub: '' }
+  }
+  return { icon: TRAVEL_MODES[h.mode]?.icon ?? '🧭', title: `${h.from?.name ?? 'My location'} → ${h.to.name}`, sub: TRAVEL_MODES[h.mode]?.label ?? '' }
 }

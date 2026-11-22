@@ -230,3 +230,19 @@ section h2 { font-size: 1rem; margin: 8px 0 0; }
 .map-menu button { text-align: left; border: 0; background: none; padding: 10px; border-radius: 8px; font-size: .95rem; min-height: 40px; cursor: pointer; }
 .map-menu button:hover:not(:disabled) { background: #f3f4f6; }
 .map-menu button:disabled { opacity: .5; }
+
+/* Recent history at the bottom of Near me. */
+.recent { margin-top: 18px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
+.recent-head { display: flex; align-items: baseline; justify-content: space-between; }
+.recent-head h2 { font-size: 1rem; margin: 0 0 6px; }
+.recent-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.recent-list li { display: flex; align-items: center; gap: 4px; }
+.recent-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; text-align: left; border: 0; background: none;
+  padding: 8px 6px; border-radius: 8px; cursor: pointer; }
+.recent-open:hover { background: #f3f4f6; }
+.recent-open .res-text { min-width: 0; display: flex; flex-direction: column; }
+.recent-open .res-text strong, .recent-open .res-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-open .res-text span { font-size: .82rem; color: #6b7280; }
+.recent-icon { flex: none; width: 32px; height: 32px; border-radius: 50%; background: #f3f4f6; display: grid; place-items: center; font-size: 1rem; }
+.recent-remove { flex: none; border: 0; background: none; color: #9ca3af; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; }
+.recent-remove:hover { background: #f3f4f6; color: #374151; }
