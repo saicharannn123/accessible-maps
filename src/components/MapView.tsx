@@ -8,6 +8,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { MAP_STYLES, PILOT_CITY, type MapStyleId } from '../config'
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import { cleanStyle, signatureStyle } from '../lib/cleanStyle'
+import { SIGNAL_MIN_ZOOM, type Signal } from '../lib/signals'
 import { renameExpression } from '../lib/placeNames'
 import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
@@ -35,6 +36,8 @@ interface Props {
   layers: Layers
   /** Move the camera here; keepZoom leaves the zoom as it is (e.g. after tapping the map). */
   flyTo: { at: LngLat; keepZoom?: boolean } | null
+  /** Traffic lights and pedestrian crossing lights, shown when zoomed in. */
+  signals: Signal[]
   /** A plain red pin: the place picked in search, or where a report goes. */
   markPin: LngLat | null
   /** Tapping the map drops a pin, so show a crosshair cursor. */
@@ -97,7 +100,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -122,7 +125,15 @@ export function MapView(props: Props) {
     let created: MlMap | null = null
     let cancelled = false
     loadBaseStyle(mapStyle).then((style) => {
-      if (!cancelled) setup(new maplibregl.Map({ container: el, style, center: PILOT_CITY.center, zoom: PILOT_CITY.zoom }))
+      if (!cancelled) setup(new maplibregl.Map({
+        container: el, style, center: PILOT_CITY.center, zoom: PILOT_CITY.zoom, maxZoom: 20,
+        // Smooth zooming: keep loading tiles mid-zoom (no blank patches), keep more nearby zoom
+        // levels cached, fade labels in quickly, and cap the pixel ratio so big screens stay fast.
+        cancelPendingTileRequestsWhileZooming: false,
+        maxTileCacheZoomLevels: 8,
+        fadeDuration: 120,
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      }))
     })
     return () => { cancelled = true; created?.remove(); mapRef.current = null }
 
@@ -130,7 +141,7 @@ export function MapView(props: Props) {
       created = map
       mapRef.current = map
       // Category pins are drawn on demand, so they survive switching the map look.
-      map.on('styleimagemissing', (e) => addCategoryIcon(map, e.id))
+      map.on('styleimagemissing', (e) => { addCategoryIcon(map, e.id); addSignalIcon(map, e.id) })
       map.addControl(new maplibregl.NavigationControl(), 'top-right')
       const scale = new maplibregl.ScaleControl({ unit: unitsRef.current === 'mi' ? 'imperial' : 'metric' })
       scaleRef.current = scale
@@ -142,7 +153,7 @@ export function MapView(props: Props) {
       }
 
       map.on('load', () => {
-        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'places', 'me']) {
+        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'places', 'me']) {
           map.addSource(id, { type: 'geojson', data: empty })
         }
         map.addLayer({ id: 'lit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], true],
@@ -174,6 +185,15 @@ export function MapView(props: Props) {
             'circle-stroke-color': '#fff', 'circle-stroke-width': 3,
           } })
 
+        // Traffic lights sit on the road; they only appear once you're zoomed in to street level.
+        map.addLayer({ id: 'signals', type: 'symbol', source: 'signals', minzoom: SIGNAL_MIN_ZOOM,
+          layout: {
+            'icon-image': ['match', ['get', 'kind'], 'crossing', 'sig-crossing', 'sig-traffic'],
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 15, 0.45, 17, 0.7, 19, 0.95],
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+          },
+          paint: { 'icon-opacity': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.4, 1] } })
         map.addLayer({ id: 'places-selected', type: 'circle', source: 'places', filter: ['==', ['get', 'selected'], true],
           paint: { 'circle-radius': 16, 'circle-color': ['get', 'color'], 'circle-opacity': 0.22 } })
         map.addLayer({ id: 'places', type: 'symbol', source: 'places',
@@ -394,6 +414,11 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     if (!ready) return
+    setData('signals', { type: 'FeatureCollection', features: signals.map((g) => point(g.coords, { kind: g.kind })) })
+  }, [signals, ready])
+
+  useEffect(() => {
+    if (!ready) return
     setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation, { acc: myAccuracy ?? 0 })] } : empty)
   }, [myLocation, myAccuracy, ready])
 
@@ -522,7 +547,7 @@ function applyNames(map: MlMap, nameView: string | null) {
   }
 }
 
-const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'places', 'me', WV_SOURCE]
+const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'places', 'me', WV_SOURCE]
 
 /** Keep our sources and layers when the base style changes: borders under labels, the rest on top. */
 function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification {
@@ -600,5 +625,38 @@ function addCategoryIcon(map: MlMap, id: string) {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(cat?.icon ?? '📍', cx, cy + 2)
+  map.addImage(id, ctx.getImageData(0, 0, w, h), { pixelRatio: 2 })
+}
+
+/** A traffic light (red, amber, green) or a pedestrian crossing light, drawn at 2x. */
+function addSignalIcon(map: MlMap, id: string) {
+  if ((id !== 'sig-traffic' && id !== 'sig-crossing') || map.hasImage(id)) return
+  const crossing = id === 'sig-crossing'
+  const w = crossing ? 44 : 32, h = crossing ? 44 : 72
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.fillStyle = '#1f1b38'
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  ctx.roundRect(2, 2, w - 4, h - 4, 9)
+  ctx.fill()
+  ctx.stroke()
+  if (crossing) {
+    ctx.font = '24px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('🚶', w / 2, h / 2 + 1)
+  } else {
+    for (const [i, c] of ['#ef4444', '#f59e0b', '#22c55e'].entries()) {
+      ctx.beginPath()
+      ctx.arc(w / 2, 15 + i * 21, 7.5, 0, Math.PI * 2)
+      ctx.fillStyle = c
+      ctx.fill()
+    }
+  }
   map.addImage(id, ctx.getImageData(0, 0, w, h), { pixelRatio: 2 })
 }

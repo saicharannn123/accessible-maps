@@ -9,6 +9,7 @@ import { openStatus } from './lib/hours'
 import { locationHelp, useLiveLocation } from './lib/useLiveLocation'
 import { CATEGORIES, CATEGORY_BY_ID, fetchNearby, type NearbyPlace } from './lib/places'
 import { loadReports, saveReports, timeAgo } from './lib/reports'
+import { loadSignals, SIGNAL_MIN_ZOOM, type Signal } from './lib/signals'
 import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
 import { reverseGeocode } from './lib/geocode'
@@ -115,6 +116,9 @@ export default function App() {
   const [draft, setDraft] = useState<{ coords: LngLat | null; type: ReportType; note: string }>({ coords: null, type: 'broken-elevator', note: '' })
   const [sheetOpen, setSheetOpen] = useState(true)
   const viewCtrl = useRef<AbortController | null>(null)
+  const [signals, setSignals] = useState<Signal[]>([])
+  const signalCtrl = useRef<AbortController | null>(null)
+  const signalTimer = useRef<number | undefined>(undefined)
   const viewTimer = useRef<number | undefined>(undefined)
 
   const [autoUnits] = useState(browserUnits)
@@ -229,6 +233,16 @@ export default function App() {
     const c: LngLat = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
     setMapCenter(c)
     lastView.current = { bbox, zoom }
+    // Traffic lights at street level, on every tab.
+    window.clearTimeout(signalTimer.current)
+    signalCtrl.current?.abort()
+    if (zoom >= SIGNAL_MIN_ZOOM) {
+      signalTimer.current = window.setTimeout(() => {
+        const ctrl = new AbortController()
+        signalCtrl.current = ctrl
+        loadSignals(bbox, ctrl.signal).then(setSignals).catch(() => {})
+      }, 350)
+    }
     window.clearTimeout(viewTimer.current)
     viewCtrl.current?.abort()
     // Restrooms, steps and curbs only matter on foot, so skip them for driving and cycling directions.
@@ -439,6 +453,7 @@ export default function App() {
         stops={routeStops}
         layers={layers}
         flyTo={flyTo}
+        signals={signals}
         markPin={tab === 'nearby' && !selected ? searchPin?.coords ?? null : tab === 'report' ? draft.coords : null}
         pickMode={pick != null || tab === 'route' || tab === 'report'}
         places={tab === 'nearby' ? shownPlaces : selected ? [selected] : []}
