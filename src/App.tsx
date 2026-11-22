@@ -594,10 +594,15 @@ export default function App() {
             </>}
 
             {selected && (
-              <div className="place-card detail">
+              <div className="place-card detail" style={{ '--cat': CATEGORY_BY_ID[selected.category]?.color ?? '#5b3df5' } as CSSProperties}>
                 <button type="button" className="back link" onClick={() => setSelectedId(null)}>← All results</button>
-                <h2>{selected.name}</h2>
-                <p className="muted">{CATEGORY_BY_ID[selected.category]?.icon} {selected.kind} · {formatDistance(selected.distance)} away</p>
+                <div className="place-hero">
+                  <span className="place-hero-icon" aria-hidden="true">{CATEGORY_BY_ID[selected.category]?.icon}</span>
+                  <div>
+                    <h2>{selected.name}</h2>
+                    <p className="muted">{selected.kind} · {formatDistance(selected.distance)} away</p>
+                  </div>
+                </div>
                 {selected.address && <p>{selected.address}</p>}
                 <OpenLine status={statusById.get(selected.id) ?? null} />
                 {selected.openingHours && <p className="muted small">Hours: {selected.openingHours}</p>}
@@ -632,7 +637,7 @@ export default function App() {
                     {shownPlaces.map((p) => (
                       <li key={p.id}>
                         <button type="button" onClick={() => { rememberPlace(p); setSelectedId(p.id); setFollow(false); fly(p.coords) }}>
-                          <span className="res-icon" style={{ background: CATEGORY_BY_ID[p.category]?.color }} aria-hidden="true">{CATEGORY_BY_ID[p.category]?.icon}</span>
+                          <span className="res-icon" style={{ '--cat': CATEGORY_BY_ID[p.category]?.color } as CSSProperties} aria-hidden="true">{CATEGORY_BY_ID[p.category]?.icon}</span>
                           <span className="res-text">
                             <strong>{p.name}</strong>
                             <span>{p.kind}{p.address ? ` · ${p.address}` : ''}</span>
@@ -746,8 +751,14 @@ export default function App() {
 
             {route && (
               <div className="route-summary">
-                <p className="big"><span aria-hidden="true">{TRAVEL_MODES[mode].icon}</span> {formatDuration(route.durationSeconds)} · {formatDistance(route.distanceMeters)}</p>
-                <p className="muted">Arrive around {arrival}{stopPlaces.length > 0 ? ` · ${stopPlaces.length} stop${stopPlaces.length > 1 ? 's' : ''}` : ''}</p>
+                <div className="route-hero">
+                  <span className="route-mode" aria-hidden="true">{TRAVEL_MODES[mode].icon}</span>
+                  <div className="route-stats">
+                    <p className="route-time">{formatDuration(route.durationSeconds)}</p>
+                    <p className="route-meta">{formatDistance(route.distanceMeters)} · {TRAVEL_MODES[mode].label}{stopPlaces.length > 0 ? ` · ${stopPlaces.length} stop${stopPlaces.length > 1 ? 's' : ''}` : ''}</p>
+                  </div>
+                  <div className="route-eta"><span>Arrive</span><strong>{arrival}</strong></div>
+                </div>
                 {mode === 'accessible' && (
                   <p className={route.stepFreeVerified ? 'ok' : 'warn'}>
                     {route.stepFreeVerified ? 'Avoids steps' : 'Not verified step-free'}
