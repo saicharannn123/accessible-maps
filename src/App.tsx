@@ -839,7 +839,7 @@ export default function App() {
                 {(Object.keys(MAP_STYLES) as MapStyleId[]).map((id) => (
                   <button key={id} type="button" role="radio" aria-checked={settings.mapLook === id}
                     className={settings.mapLook === id ? 'active' : ''}
-                    onClick={() => setSettings({ ...settings, mapLook: id })}>{MAP_STYLES[id].label}</button>
+                    onClick={() => setSettings({ ...settings, mapLook: id, lookPicked: true })}>{MAP_STYLES[id].label}</button>
                 ))}
               </div>
             </div>

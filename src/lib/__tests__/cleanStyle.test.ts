@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { StyleSpecification } from 'maplibre-gl'
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
-import { cleanStyle } from '../cleanStyle'
+import { cleanStyle, signatureStyle } from '../cleanStyle'
 
 const base = {
   version: 8,
@@ -14,6 +14,7 @@ const base = {
     { id: 'road_minor', type: 'line', source: 'v', 'source-layer': 'transportation', paint: { 'line-color': '#000' } },
     { id: 'waterway_river', type: 'line', source: 'v', 'source-layer': 'waterway' },
     { id: 'waterway_line_label', type: 'symbol', source: 'v', 'source-layer': 'waterway' },
+    { id: 'road_path_pedestrian', type: 'line', source: 'v', 'source-layer': 'transportation', paint: { 'line-color': '#000' } },
     { id: 'label_other', type: 'symbol', source: 'v', 'source-layer': 'place', layout: { 'text-field': '{name}' } },
   ],
 } as unknown as StyleSpecification
@@ -34,5 +35,17 @@ describe('cleanStyle', () => {
     expect(byId.label_other.layout?.['text-transform']).toBe('uppercase')
     expect(byId.label_other.layout?.['text-field']).toBe('{name}')
     expect((base.layers[0] as unknown as { paint: Record<string, string> }).paint['background-color']).toBe('#000')
+  })
+})
+
+describe('signatureStyle', () => {
+  it('uses its own palette and highlights walkways', () => {
+    const out = signatureStyle(base)
+    const byId = Object.fromEntries(out.layers.map((l) => [l.id, l as unknown as { paint?: Record<string, unknown> }]))
+    expect(byId.background.paint?.['background-color']).toBe('#f4f1fb')
+    expect(byId.road_motorway_casing.paint?.['line-color']).toBe('#7a5cf0')
+    expect(byId.road_path_pedestrian.paint?.['line-color']).toBe('#14b8a6')
+    expect(byId.road_path_pedestrian.paint?.['line-dasharray']).toEqual([1.5, 1])
+    expect(validateStyleMin({ ...out, sources: { v: { type: 'vector', url: 'x' }, ne: { type: 'raster', url: 'y' } } })).toEqual([])
   })
 })

@@ -73,6 +73,8 @@ export interface Settings {
   worldview: import('./worldview').WorldviewSetting
   /** Base map look. Renamed from mapStyle so everyone moves to the new Clean default once. */
   mapLook: import('../config').MapStyleId
+  /** Set once the visitor chooses a map look themselves. */
+  lookPicked?: boolean
   /** Travel mode for directions, remembered between visits. */
   travelMode: TravelMode
   /** Distance units: 'auto' picks miles in the US and UK, kilometers elsewhere. */
