@@ -379,7 +379,7 @@ section > .search input:focus { background-color: #fff; }
 /* Route card: hero with big time */
 .route-summary { border: 0; border-radius: 20px; padding: 0; gap: 10px; background: #fff; box-shadow: var(--shadow-1); overflow: hidden; }
 .route-summary > :not(.route-hero) { margin: 0 16px; }
-.route-summary > :last-child { margin-bottom: 14px; }
+.route-summary > :last-child:not(.route-hero) { margin-bottom: 14px; }
 .route-hero { display: flex; align-items: center; gap: 12px; padding: 16px; color: #fff;
   background: radial-gradient(120% 140% at 0% 0%, #7c5cff, var(--brand) 45%, #3a22b8); }
 .route-mode { flex: none; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; font-size: 1.4rem; background: rgba(255,255,255,.18); }
