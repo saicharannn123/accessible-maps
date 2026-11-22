@@ -51,7 +51,7 @@ button { cursor: pointer; }
 /* Map controls move left of the panel on wide screens. */
 @media (min-width: 721px) {
   .app .maplibregl-ctrl-top-right { right: calc(var(--panel-w) + var(--gap)); top: 4px; }
-  .app .maplibregl-ctrl-bottom-right { right: calc(var(--panel-w) + var(--gap)); }
+  .app .maplibregl-ctrl-bottom-right { right: calc(var(--panel-w) + var(--gap)); bottom: calc(var(--dock-h) + var(--gap) * 2); }
   .maplibregl-ctrl-group { border-radius: 14px !important; overflow: hidden; }
   .app .locate-btn { right: calc(var(--panel-w) + var(--gap) + 10px); }
 }
