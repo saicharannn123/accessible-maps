@@ -162,8 +162,8 @@ export function MapView(props: Props) {
             'circle-color': ['match', ['get', 'wheelchair'], 'yes', '#15803d', 'limited', '#ca8a04', 'no', '#7c3aed', '#6b7280'],
             'circle-stroke-color': '#fff', 'circle-stroke-width': 2,
           } })
-        map.addLayer({ id: 'reports', type: 'circle', source: 'reports',
-          paint: { 'circle-radius': 9, 'circle-color': '#dc2626', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } })
+        map.addLayer({ id: 'reports', type: 'symbol', source: 'reports',
+          layout: { 'icon-image': 'pin-report', 'icon-size': 0.8, 'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
         map.addLayer({ id: 'warnings', type: 'circle', source: 'warnings',
           paint: { 'circle-radius': 12, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#ea580c', 'circle-stroke-width': 3 } })
         map.addLayer({ id: 'endpoints', type: 'circle', source: 'endpoints',
@@ -339,10 +339,14 @@ export function MapView(props: Props) {
 
   // Trip pins: start, numbered stops and destination, each draggable to fine-tune the spot.
   const pinMarkers = useRef<maplibregl.Marker[]>([])
+  const pinKeys = useRef<Set<string>>(new Set())
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map) return
     for (const m of pinMarkers.current) m.remove()
+    // Only pins that are new or moved get the drop animation; the rest stay still.
+    const before = pinKeys.current
+    pinKeys.current = new Set()
     const pins: { role: 'from' | 'to' | number; at: LngLat }[] = [
       ...(from ? [{ role: 'from' as const, at: from }] : []),
       ...stops.map((at, i) => ({ role: i, at })),
@@ -351,12 +355,14 @@ export function MapView(props: Props) {
     pinMarkers.current = pins.map(({ role, at }) => {
       const el = document.createElement('div')
       el.className = `trip-pin ${role === 'from' ? 'start' : role === 'to' ? 'end' : 'stop'}`
-      if (typeof role === 'number') el.textContent = String(role + 1)
       // A drawn pin, not a rotated box: rotating the marker element would also rotate MapLibre's
       // positioning transform and throw the pin off the map.
-      if (role === 'to') el.innerHTML = PIN_SVG
+      const key = `${role}@${at[0]},${at[1]}`
+      pinKeys.current.add(key)
+      if (!before.has(key)) el.classList.add('drop')
+      el.innerHTML = role === 'from' ? pinSvg('#16a34a') : role === 'to' ? PIN_SVG : pinSvg('#f59e0b', String(role + 1))
       el.title = role === 'from' ? 'Start (drag to move)' : role === 'to' ? 'Destination (drag to move)' : `Stop ${role + 1} (drag to move)`
-      const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: role === 'to' ? 'bottom' : 'center' })
+      const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: 'bottom' })
         .setLngLat(at)
         .addTo(map)
       marker.on('dragend', () => {
@@ -451,7 +457,14 @@ export function MapView(props: Props) {
   return <div ref={container} className="map" aria-label="Map" />
 }
 
-const PIN_SVG = '<svg width="28" height="38" viewBox="0 0 28 38" aria-hidden="true"><path d="M14 37s12-13.2 12-22.5A12 12 0 0 0 2 14.5C2 23.8 14 37 14 37z" fill="#dc2626" stroke="#fff" stroke-width="2"/><circle cx="14" cy="14.5" r="4.5" fill="#fff"/></svg>'
+/** A teardrop map pin; with a label (a stop number) the label sits in the white center. */
+function pinSvg(color: string, label?: string): string {
+  const center = label
+    ? `<circle cx="14" cy="14.5" r="7.5" fill="#fff"/><text x="14" y="18.5" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="11" fill="${color}">${label}</text>`
+    : '<circle cx="14" cy="14.5" r="4.5" fill="#fff"/>'
+  return `<svg width="28" height="38" viewBox="0 0 28 38" aria-hidden="true"><path d="M14 37s12-13.2 12-22.5A12 12 0 0 0 2 14.5C2 23.8 14 37 14 37z" fill="${color}" stroke="#fff" stroke-width="2"/>${center}</svg>`
+}
+const PIN_SVG = pinSvg('#dc2626')
 
 const BASE_BORDER_LAYERS = ['boundary_2', 'boundary_disputed']
 const WV_SOURCE = 'ne-borders'
@@ -549,8 +562,10 @@ function safeClean(style: StyleSpecification): StyleSpecification {
 
 /** A map pin in the category's color with its icon, drawn at 2x for sharp screens. */
 function addCategoryIcon(map: MlMap, id: string) {
-  if (!id.startsWith('cat-') || map.hasImage(id)) return
-  const cat = CATEGORIES.find((c) => `cat-${c.id}` === id)
+  if (map.hasImage(id)) return
+  const cat = id === 'pin-report' ? { color: '#dc2626', icon: '⚠️' }
+    : id.startsWith('cat-') ? CATEGORIES.find((c) => `cat-${c.id}` === id) : null
+  if (!cat) return
   const w = 72, h = 88, r = 32, cx = w / 2, cy = r + 4
   const canvas = document.createElement('canvas')
   canvas.width = w
