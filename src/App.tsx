@@ -100,7 +100,11 @@ export default function App() {
   const [mapMenu, setMapMenu] = useState<{ at: LngLat; x: number; y: number; name: string | null } | null>(null)
   const [routeState, setRouteState] = useState<{ key: string; route: RouteResult | null; error: string | null }>({ key: '', route: null, error: null })
   const [routing, setRouting] = useState(false)
-  const [flyTo, setFlyTo] = useState<LngLat | null>(null)
+  const [flyTo, setFlyTo] = useState<{ at: LngLat; keepZoom?: boolean } | null>(null)
+  // A fresh object every time, so picking the same place twice still moves the map.
+  const fly = useCallback((at: LngLat, keepZoom = false) => setFlyTo({ at: [...at] as LngLat, keepZoom }), [])
+  // The place you picked from the search box on the Near me tab, shown as a red pin.
+  const [searchPin, setSearchPin] = useState<Place | null>(null)
   const [draft, setDraft] = useState<{ coords: LngLat | null; type: ReportType; note: string }>({ coords: null, type: 'broken-elevator', note: '' })
   const [sheetOpen, setSheetOpen] = useState(true)
   const viewCtrl = useRef<AbortController | null>(null)
@@ -122,7 +126,7 @@ export default function App() {
 
   const locateMe = () => {
     setFollow(true)
-    if (myLocation) setFlyTo([...myLocation] as LngLat)
+    if (myLocation) fly(myLocation)
     if (loc.status !== 'live') loc.start()
   }
 
@@ -260,8 +264,17 @@ export default function App() {
       dropPin(activeField, c)
       if (activeField !== 'to') setActiveField('to')
     } else return
+    // Center on the new pin (keeping the zoom you chose) and bring the panel back.
+    fly(c, true)
+    if (pick) setSheetOpen(true)
     setPick(null)
-  }, [pick, tab, activeField, dropPin])
+  }, [pick, tab, activeField, dropPin, fly])
+
+  // "Pick on map": on phones, tuck the panel away so the whole map is free to tap.
+  const startPick = (field: Exclude<Pick, null>) => {
+    setPick(field)
+    if (window.innerWidth <= 720) setSheetOpen(false)
+  }
 
   const onMapContext = useCallback((c: LngLat, screen: { x: number; y: number }) => {
     setMapMenu({ at: c, x: screen.x, y: screen.y, name: null })
@@ -393,6 +406,8 @@ export default function App() {
         stops={routeStops}
         layers={layers}
         flyTo={flyTo}
+        markPin={tab === 'nearby' && !selected ? searchPin?.coords ?? null : tab === 'report' ? draft.coords : null}
+        pickMode={pick != null || tab === 'route' || tab === 'report'}
         places={tab === 'nearby' ? shownPlaces : selected ? [selected] : []}
         selectedPlaceId={selectedId}
         myLocation={myLocation}
@@ -483,10 +498,25 @@ export default function App() {
               near={searchCenter}
               onSelect={(p) => {
                 if (!p) return
-                setFlyTo(p.coords)
+                setSearchPin(p)
+                setSelectedId(null)
+                fly(p.coords)
                 // A specific address becomes the new "near" point for the categories.
                 if (nearby.category) searchNearby(nearby.category, nearby.radius, p.coords)
               }} />
+            {searchPin && (
+              <div className="place-card pin-card">
+                <button type="button" className="pin-close" aria-label="Remove pin" onClick={() => setSearchPin(null)}>✕</button>
+                <h2>📍 {searchPin.name}</h2>
+                {searchPin.detail && <p className="muted">{searchPin.detail}</p>}
+                <div className="actions">
+                  <button type="button" className="primary" onClick={() => {
+                    setTo(searchPin); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route')
+                  }}>Directions</button>
+                  <button type="button" className="secondary" onClick={() => fly(searchPin.coords)}>Show on map</button>
+                </div>
+              </div>
+            )}
             <p className="muted small loc-line">
               {loc.status === 'live' ? '📍 Showing places near your live location'
                 : loc.status === 'asking' || loc.status === 'checking' ? 'Finding your location…'
@@ -563,7 +593,7 @@ export default function App() {
                   <ul className="results">
                     {shownPlaces.map((p) => (
                       <li key={p.id}>
-                        <button type="button" onClick={() => { setSelectedId(p.id); setFollow(false); setFlyTo(p.coords) }}>
+                        <button type="button" onClick={() => { setSelectedId(p.id); setFollow(false); fly(p.coords) }}>
                           <span className="res-icon" style={{ background: CATEGORY_BY_ID[p.category]?.color }} aria-hidden="true">{CATEGORY_BY_ID[p.category]?.icon}</span>
                           <span className="res-text">
                             <strong>{p.name}</strong>
@@ -599,16 +629,16 @@ export default function App() {
                   <span className="trip-dot start" aria-hidden="true" />
                   <SearchBox label="Start" hideLabel value={fromPlace} near={searchCenter} onFocus={() => setActiveField('from')}
                     placeholder={loc.status === 'asking' ? 'Finding your location…' : 'Choose a starting point'}
-                    onSelect={(p) => { setFrom(p); if (p) setFlyTo(p.coords) }}
-                    extraOptions={[{ label: 'Use my location', onPick: useMyLocation }, { label: 'Pick on map', onPick: () => setPick('from') }]} />
+                    onSelect={(p) => { setFrom(p); if (p) fly(p.coords) }}
+                    extraOptions={[{ label: 'Use my location', onPick: useMyLocation }, { label: 'Pick on map', onPick: () => startPick('from') }]} />
                 </li>
                 {stops.map((st, i) => (
                   <li key={st.id}>
                     <span className="trip-dot stop" aria-hidden="true">{i + 1}</span>
                     <SearchBox label={`Stop ${i + 1}`} hideLabel value={st.place} placeholder={`Add stop ${i + 1}`} onFocus={() => setActiveField(`stop-${st.id}`)}
                       near={fromPlace?.coords ?? searchCenter}
-                      onSelect={(p) => { setStop(st.id, p); if (p) setFlyTo(p.coords) }}
-                      extraOptions={[{ label: 'Pick on map', onPick: () => setPick(`stop-${st.id}`) }]} />
+                      onSelect={(p) => { setStop(st.id, p); if (p) fly(p.coords) }}
+                      extraOptions={[{ label: 'Pick on map', onPick: () => startPick(`stop-${st.id}`) }]} />
                     <button type="button" className="icon-btn" aria-label={`Remove stop ${i + 1}`} onClick={() => removeStop(st.id)}>✕</button>
                   </li>
                 ))}
@@ -616,8 +646,8 @@ export default function App() {
                   <span className="trip-dot end" aria-hidden="true" />
                   <SearchBox label="Destination" hideLabel value={to} placeholder="Choose a destination or tap the map" onFocus={() => setActiveField('to')}
                     near={fromPlace?.coords ?? searchCenter}
-                    onSelect={(p) => { setTo(p); if (p) setFlyTo(p.coords) }}
-                    extraOptions={[{ label: 'Pick on map', onPick: () => setPick('to') }]} />
+                    onSelect={(p) => { setTo(p); if (p) fly(p.coords) }}
+                    extraOptions={[{ label: 'Pick on map', onPick: () => startPick('to') }]} />
                 </li>
               </ol>
               <button type="button" className="icon-btn swap" aria-label="Swap start and destination" title="Swap start and destination"
@@ -663,7 +693,7 @@ export default function App() {
                   <ul className="warnings">
                     {route.warnings.map((w, i) => (
                       <li key={i} className={`w-${w.kind}`}>
-                        {w.coords ? <button type="button" onClick={() => setFlyTo(w.coords!)}>{w.message}</button> : w.message}
+                        {w.coords ? <button type="button" onClick={() => fly(w.coords!)}>{w.message}</button> : w.message}
                       </li>
                     ))}
                   </ul>
@@ -678,7 +708,7 @@ export default function App() {
                 <p>
                   Nearest accessible restroom:{' '}
                   {destInfo.restroom
-                    ? <button type="button" className="link" onClick={() => setFlyTo(destInfo.restroom!.r.coords)}>{destInfo.restroom.r.name}, {formatDistance(destInfo.restroom.d)} away</button>
+                    ? <button type="button" className="link" onClick={() => fly(destInfo.restroom!.r.coords)}>{destInfo.restroom.r.name}, {formatDistance(destInfo.restroom.d)} away</button>
                     : 'none found in the area shown on the map'}
                 </p>
                 {destInfo.nearbyReports.length > 0 && (
@@ -713,7 +743,7 @@ export default function App() {
                 <ul className="report-list">
                   {[...reports].reverse().map((r) => (
                     <li key={r.id}>
-                      <button type="button" className="link" onClick={() => setFlyTo(r.coords)}>{REPORT_LABELS[r.type]}</button>
+                      <button type="button" className="link" onClick={() => fly(r.coords)}>{REPORT_LABELS[r.type]}</button>
                       <span className="muted"> · {timeAgo(r.createdAt)}</span>
                       <button type="button" className="remove" aria-label="Remove report" onClick={() => setReports((rs) => rs.filter((x) => x.id !== r.id))}>×</button>
                     </li>
