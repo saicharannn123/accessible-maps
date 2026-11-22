@@ -85,10 +85,11 @@ const LAYER_GROUPS: Record<keyof Layers, string[]> = {
 
 /** Keep the route clear of the side panel (desktop) or bottom sheet (phone). */
 function routePadding() {
+  // Phones: the sheet and the dock cover the bottom. Wider screens: the panel sits on the right.
   if (window.innerWidth <= 720) {
-    return { top: 110, bottom: Math.round(window.innerHeight * 0.62) + 20, left: 40, right: 40 }
+    return { top: 110, bottom: Math.round(window.innerHeight * 0.62) + 90, left: 40, right: 40 }
   }
-  return { top: 80, bottom: 60, left: 430, right: 80 }
+  return { top: 90, bottom: 110, left: 80, right: 440 }
 }
 
 function escapeHtml(s: string): string {
@@ -153,7 +154,7 @@ export function MapView(props: Props) {
           paint: { 'line-color': '#ffffff', 'line-width': 10 } })
         map.addLayer({ id: 'route', type: 'line', source: 'route',
           layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': '#1a5fd6', 'line-width': 6 } })
+          paint: { 'line-color': '#5b3df5', 'line-width': 6 } })
         map.addLayer({ id: 'obstacles', type: 'circle', source: 'obstacles',
           paint: { 'circle-radius': 4, 'circle-color': '#b45309', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } })
         map.addLayer({ id: 'restrooms', type: 'circle', source: 'restrooms',
@@ -431,7 +432,7 @@ export function MapView(props: Props) {
     const map = mapRef.current
     if (!flyTo || !map) return
     // On phones the bottom sheet covers the lower part of the map, so aim above it.
-    const offset: [number, number] = window.innerWidth <= 720 ? [0, -Math.round(window.innerHeight * 0.28)] : [196, 0]
+    const offset: [number, number] = window.innerWidth <= 720 ? [0, -Math.round(window.innerHeight * 0.3)] : [-200, -30]
     if (flyTo.keepZoom) map.easeTo({ center: flyTo.at, offset, duration: 600 })
     else map.flyTo({ center: flyTo.at, zoom: Math.max(map.getZoom(), 15), offset })
   }, [flyTo])
