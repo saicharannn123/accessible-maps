@@ -27,6 +27,10 @@ export interface Place {
   icon?: string
   /** Far from you (shown under "Farther away"). */
   far?: boolean
+  /** Well-known places: a photo, a one-line description and a Wikipedia link. */
+  photo?: string
+  about?: string
+  wiki?: string
 }
 
 export type ReportType =

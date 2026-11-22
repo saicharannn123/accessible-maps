@@ -52,16 +52,24 @@ export async function loadSignals(view: BBox, signal?: AbortSignal): Promise<Sig
     const w = Math.min(...boxes.map((b) => b[0])), s = Math.min(...boxes.map((b) => b[1]))
     const e = Math.max(...boxes.map((b) => b[2])), n = Math.max(...boxes.map((b) => b[3]))
     const q = `[out:json][timeout:15];(node["highway"="traffic_signals"](${s},${w},${n},${e});node["crossing"="traffic_signals"](${s},${w},${n},${e}););out body;`
+    // Public Overpass servers are often slow or down, so ask them all at once and take the first answer.
+    const race = new AbortController()
+    const stop = () => race.abort()
+    signal?.addEventListener('abort', stop)
     let found: Signal[] | null = null
-    for (const url of OVERPASS_URLS) {
-      try {
-        const res = await fetchWithTimeout(url, { method: 'POST', body: new URLSearchParams({ data: q }) }, 12000, signal)
-        if (!res.ok) continue
-        found = parseSignals(((await res.json()) as { elements: [] }).elements)
-        break
-      } catch (e) {
-        if (signal?.aborted) throw e
-      }
+    try {
+      found = await Promise.any(OVERPASS_URLS.map(async (url) => {
+        const res = await fetchWithTimeout(url, { method: 'POST', body: new URLSearchParams({ data: q }) }, 25000, race.signal)
+        if (!res.ok) throw new Error(`Overpass ${res.status}`)
+        const data = (await res.json()) as { elements?: [] }
+        if (!data.elements) throw new Error('Overpass gave no data')
+        return parseSignals(data.elements)
+      }))
+    } catch {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    } finally {
+      race.abort()
+      signal?.removeEventListener('abort', stop)
     }
     if (!found) throw new Error('Traffic signals could not be loaded')
     for (const k of missing) cache.set(k, [])
