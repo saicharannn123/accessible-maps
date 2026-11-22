@@ -77,6 +77,8 @@ section h2 { font-size: 1rem; margin: 8px 0 0; }
 .search-results button:hover { background: #f3f4f6; }
 .search-results span { display: block; font-size: .8rem; color: #6b7280; }
 .search-error { padding: 8px 10px; color: #b91c1c; font-size: .9rem; }
+.search-offline { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.search-offline button { width: auto; padding: 8px 14px; }
 
 .profile-row { display: flex; align-items: center; gap: 10px; }
 .profile-row span { font-weight: 600; font-size: .9rem; white-space: nowrap; }
@@ -320,7 +322,7 @@ section h2 { font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
   transition: border-color .15s, box-shadow .15s, background .15s;
 }
 .search input:hover, select:hover { border-color: #d8d2f0; }
-.search input:focus, .field input:focus, select:focus { outline: none; border-color: var(--brand); background: #fff; box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 16%, transparent); }
+.search input:focus, .field input:focus, select:focus { outline: none; border-color: var(--brand); background-color: #fff; box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 16%, transparent); }
 section > .search input {
   padding-left: 44px; background: var(--surface) no-repeat 14px 50% / 18px
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c75a6' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");

@@ -1,6 +1,7 @@
 import { GEOCODER_URL, PHOTON_REVERSE_URL, PILOT_CITY } from '../config'
 import { distanceMeters } from './geo'
 import { matchKind, photonPlace, searchNearbyKind, searchNearbyTagged } from './search'
+import { AnswerCache, fetchJson, nominatimSearch } from './sources'
 import type { LngLat, Place } from './types'
 
 export interface SearchResults {
@@ -24,13 +25,39 @@ function bbox([lon, lat]: LngLat, deg: number): string {
 
 async function photon(q: string, center: LngLat, extra: string, signal?: AbortSignal): Promise<PhotonFeature[]> {
   const url = `${GEOCODER_URL}?q=${encodeURIComponent(q)}&lang=en&lat=${center[1]}&lon=${center[0]}${extra}`
-  const res = await fetch(url, { signal })
-  if (!res.ok) throw new Error(`Search failed (${res.status})`)
-  return ((await res.json()) as { features: PhotonFeature[] }).features ?? []
+  return (await fetchJson<{ features?: PhotonFeature[] }>(url, {}, { timeout: 7000, tries: 2, signal })).features ?? []
+}
+
+/**
+ * Text search: Photon first (retrying once if it's busy), then Nominatim if Photon is down.
+ * `box` keeps results inside an area; without it the whole world is searched.
+ */
+async function textSearch(q: string, center: LngLat, box: string | null, limit: number, signal?: AbortSignal, extra = ''): Promise<Place[]> {
+  try {
+    const fs = await photon(q, center, `&limit=${limit}${box ? `&bbox=${box}` : ''}${extra}`, signal)
+    return fs.map((f) => photonPlace(f, center))
+  } catch (e) {
+    if (signal?.aborted) throw e
+    return nominatimSearch(q, center, box, Math.min(limit, 15), signal)
+  }
 }
 
 const key = (p: Place) => `${p.name}|${p.coords[0].toFixed(4)},${p.coords[1].toFixed(4)}`
-const quiet = <T,>(p: Promise<T[]>): Promise<T[]> => p.catch((e) => { if (e?.name === 'AbortError') throw e; return [] })
+/** A failed source counts as "no results" (and is noted in `failed`), never as a broken search. */
+function quietly(failed: { n: number }) {
+  return <T,>(p: Promise<T[]>): Promise<T[]> => p.catch((e) => {
+    if (e?.name === 'AbortError') throw e
+    failed.n++
+    return []
+  })
+}
+
+/** Thrown only when every search source is unreachable and there's nothing saved to show. */
+export class SearchOfflineError extends Error {
+  constructor() { super('Search sources are unreachable'); this.name = 'SearchOfflineError' }
+}
+
+const answers = new AnswerCache<SearchResults>()
 
 /** Search places, nearest to you first. */
 export async function searchPlaces(query: string, signal?: AbortSignal, near?: LngLat): Promise<Place[]> {
@@ -47,17 +74,43 @@ export async function searchAll(query: string, signal?: AbortSignal, near?: LngL
   const q = query.trim()
   if (q.length < 2) return { kind: null, places: [] }
   const center = near ?? PILOT_CITY.center
+  // Same words from about the same spot (within ~1 km) reuse the answer for 10 minutes.
+  const cacheKey = `${q.toLowerCase()}|${center[0].toFixed(2)},${center[1].toFixed(2)}|${withTagged}`
+  const cached = answers.get(cacheKey)
+  if (cached) return cached
+  try {
+    const result = await searchFresh(q, center, signal, withTagged)
+    if (result.places.length || !result.offline) answers.set(cacheKey, result)
+    if (result.offline && !result.places.length) {
+      const old = answers.stale(cacheKey)
+      if (old) return old
+      throw new SearchOfflineError()
+    }
+    return result
+  } catch (e) {
+    if (e instanceof SearchOfflineError || signal?.aborted) throw e
+    const old = answers.stale(cacheKey)
+    if (old) return old
+    throw e
+  }
+}
+
+async function searchFresh(q: string, center: LngLat, signal: AbortSignal | undefined, withTagged: boolean): Promise<SearchResults & { offline?: boolean }> {
   const kind = matchKind(q)
   const dist = (p: Place) => distanceMeters(center, p.coords)
   const byDistance = (a: Place, b: Place) => dist(a) - dist(b)
+  const failed = { n: 0 }
+  const quiet = quietly(failed)
 
   const [tagged, ofKind, local, anywhere] = await Promise.all([
-    // Tag lookups (Overpass) can take many seconds, so callers ask for them in a second pass.
+    // Tag lookups can take many seconds, so callers ask for them in a second pass.
     kind && withTagged ? quiet(searchNearbyTagged(kind, center, signal)) : Promise.resolve([] as Place[]),
     kind ? quiet(searchNearbyKind(kind, center, signal)) : Promise.resolve([] as Place[]),
-    photon(q, center, `&limit=25&bbox=${bbox(center, 0.35)}`, signal).then((fs) => fs.map((f) => photonPlace(f, center))),
-    quiet(photon(q, center, '&limit=10&zoom=12&location_bias_scale=0.1', signal).then((fs) => fs.map((f) => photonPlace(f, center)))),
+    quiet(textSearch(q, center, bbox(center, 0.35), 25, signal)),
+    quiet(textSearch(q, center, null, 10, signal, '&zoom=12&location_bias_scale=0.1')),
   ])
+  const sources = 2 + (kind ? 1 : 0) + (kind && withTagged ? 1 : 0)
+  const offline = failed.n >= sources
 
   const seen = new Set<string>()
   const take = (ps: Place[]) => ps.filter((p) => { const k = key(p); if (seen.has(k)) return false; seen.add(k); return true })
@@ -74,8 +127,8 @@ export async function searchAll(query: string, signal?: AbortSignal, near?: LngL
   ]
 
   if (near1.length < MIN_LOCAL) {
-    const wider = await quiet(photon(q, center, `&limit=15&bbox=${bbox(center, 1.2)}`, signal))
-    near1 = [...near1, ...take(wider.map((f) => photonPlace(f, center)).sort(byDistance))]
+    const wider = offline ? [] : await quiet(textSearch(q, center, bbox(center, 1.2), 15, signal))
+    near1 = [...near1, ...take([...wider].sort(byDistance))]
   }
   const close = near1.filter((p) => dist(p) <= NEAR_LIMIT_M * 1.5)
   const nearbyAnywhere = take(anywhere.filter((p) => dist(p) <= NEAR_LIMIT_M))
@@ -84,7 +137,7 @@ export async function searchAll(query: string, signal?: AbortSignal, near?: LngL
     : take(anywhere.filter((p) => dist(p) > NEAR_LIMIT_M)).map((p) => ({ ...p, far: true }))
 
   const places = [...close, ...nearbyAnywhere.sort(byDistance)].slice(0, 12).concat(far.slice(0, 4))
-  return { kind: kind ? { label: kind.label, icon: kind.icon, tagged: !!(kind.sport || kind.cuisine) } : null, places }
+  return { kind: kind ? { label: kind.label, icon: kind.icon, tagged: !!(kind.sport || kind.cuisine) } : null, places, offline }
 }
 
 /** The address or place name at a point, for a pin dropped on the map. */

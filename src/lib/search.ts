@@ -1,5 +1,6 @@
 import { OVERPASS_URLS, PHOTON_REVERSE_URL } from '../config'
-import { CATEGORIES, fetchWithTimeout } from './places'
+import { CATEGORIES } from './places'
+import { fetchJson, firstOf, osmNearby } from './sources'
 import { distanceMeters, formatDistance } from './geo'
 import type { LngLat, Place } from './types'
 
@@ -161,12 +162,19 @@ export async function searchNearbyKind(kind: PlaceKind, center: LngLat, signal?:
   if (!kind.tags.length) return []
   const params = new URLSearchParams({ lat: center[1].toFixed(6), lon: center[0].toFixed(6), radius: '30', limit: '8', lang: 'en' })
   for (const t of kind.tags) params.append('osm_tag', t)
-  const res = await fetch(`${PHOTON_REVERSE_URL}?${params}`, { signal })
-  if (!res.ok) throw new Error(`Search failed (${res.status})`)
-  const features = ((await res.json()) as { features: PhotonFeature[] }).features ?? []
+  const icon = kind.sport ? '🏟️' : kind.icon
+  let features: PhotonFeature[]
+  try {
+    features = (await fetchJson<{ features?: PhotonFeature[] }>(`${PHOTON_REVERSE_URL}?${params}`, {}, { timeout: 7000, tries: 2, signal })).features ?? []
+  } catch (e) {
+    if (signal?.aborted) throw e
+    // Photon is down: read the same tags from QLever's copy of OpenStreetMap instead.
+    const backup = (await osmNearby({ tags: kind.tags }, center, icon, signal)).slice(0, 8)
+    return kind.sport ? backup.map((p) => ({ ...p, detail: `Sports centre · ${p.detail}` })) : backup
+  }
   // For a sport these are sports centres that may offer it, so don't badge them as courts.
   return features.filter((f) => f.properties.name).map((f) => {
-    const p = placeFrom(f, center, kind.sport ? '🏟️' : kind.icon)
+    const p = placeFrom(f, center, icon)
     return kind.sport ? { ...p, detail: `Sports centre · ${p.detail}` } : p
   })
 }
@@ -183,29 +191,32 @@ export async function searchNearbyTagged(kind: PlaceKind, center: LngLat, signal
   if (!filter) return []
   const [lng, lat] = center
   const q = `[out:json][timeout:8];nwr${filter}(around:25000,${lat},${lng});out center tags 40;`
-  for (const url of OVERPASS_URLS.slice(0, 2)) {
-    try {
-      const res = await fetchWithTimeout(url, { method: 'POST', body: new URLSearchParams({ data: q }) }, 7000, signal)
-      if (!res.ok) continue
-      const data = (await res.json()) as { elements: { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[] }
-      return data.elements.flatMap((el) => {
-        const c = el.center ?? (el.lat != null && el.lon != null ? { lat: el.lat, lon: el.lon } : null)
-        if (!c) return []
-        const t = el.tags ?? {}
-        const coords: LngLat = [c.lon, c.lat]
-        const what = kind.sport ? (t.name ? '' : `${kind.label} ${t.leisure === 'pitch' ? 'court' : 'place'}`) : ''
-        const street = [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' ')
-        const where = [street, t['addr:city']].filter(Boolean).join(', ')
-        return [{
-          name: t.name || what || kind.label,
-          detail: [formatDistance(distanceMeters(center, coords)), where].filter(Boolean).join(' · '),
-          coords, icon: kind.icon,
-        }]
-      })
-    } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') throw e
-    }
+  const fromOverpass = async (url: string): Promise<Place[]> => {
+    const data = await fetchJson<{ elements: { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[] }>(
+      url, { method: 'POST', body: new URLSearchParams({ data: q }) }, { timeout: 9000, tries: 1, signal })
+    return data.elements.flatMap((el) => {
+      const c = el.center ?? (el.lat != null && el.lon != null ? { lat: el.lat, lon: el.lon } : null)
+      if (!c) return []
+      const t = el.tags ?? {}
+      const coords: LngLat = [c.lon, c.lat]
+      const what = kind.sport ? (t.name ? '' : `${kind.label} ${t.leisure === 'pitch' ? 'court' : 'place'}`) : ''
+      const street = [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' ')
+      const where = [street, t['addr:city']].filter(Boolean).join(', ')
+      return [{
+        name: t.name || what || kind.label,
+        detail: [formatDistance(distanceMeters(center, coords)), where].filter(Boolean).join(' · '),
+        coords, icon: kind.icon,
+      }]
+    })
   }
-  return []
+  // Overpass is often busy, so ask it and QLever's OSM copy at once and take the first answer.
+  try {
+    return await firstOf([
+      osmNearby({ sport: kind.sport, cuisine: kind.cuisine ? `(^|;)(${kind.cuisine})($|;)` : undefined }, center, kind.icon, signal),
+      ...OVERPASS_URLS.slice(0, 2).map(fromOverpass),
+    ])
+  } catch (e) {
+    if (signal?.aborted) throw e
+    return []
+  }
 }
-
