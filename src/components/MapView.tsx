@@ -9,6 +9,7 @@ import { MAP_STYLES, PILOT_CITY, type MapStyleId } from '../config'
 import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import { cleanStyle, signatureStyle } from '../lib/cleanStyle'
 import { SIGNAL_MIN_ZOOM, type Signal } from '../lib/signals'
+import type { FamousPlace } from '../lib/famous'
 import { renameExpression } from '../lib/placeNames'
 import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
@@ -38,6 +39,9 @@ interface Props {
   flyTo: { at: LngLat; keepZoom?: boolean } | null
   /** Traffic lights and pedestrian crossing lights, shown when zoomed in. */
   signals: Signal[]
+  /** Well-known places for the country or region in view. */
+  famous: FamousPlace[]
+  onFamousClick: (p: FamousPlace) => void
   /** A plain red pin: the place picked in search, or where a report goes. */
   markPin: LngLat | null
   /** Tapping the map drops a pin, so show a crosshair cursor. */
@@ -100,7 +104,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -110,9 +114,13 @@ export function MapView(props: Props) {
   const userMoveRef = useRef(onUserMove)
   const contextRef = useRef(onMapContext)
   const pinDragRef = useRef(onPinDrag)
+  const famousClickRef = useRef(onFamousClick)
+  const famousRef = useRef(famous)
   useEffect(() => {
     contextRef.current = onMapContext
     pinDragRef.current = onPinDrag
+    famousClickRef.current = onFamousClick
+    famousRef.current = famous
     userMoveRef.current = onUserMove
     placeClickRef.current = onPlaceClick
     clickRef.current = onMapClick
@@ -141,7 +149,7 @@ export function MapView(props: Props) {
       created = map
       mapRef.current = map
       // Category pins are drawn on demand, so they survive switching the map look.
-      map.on('styleimagemissing', (e) => { addCategoryIcon(map, e.id); addSignalIcon(map, e.id) })
+      map.on('styleimagemissing', (e) => { addCategoryIcon(map, e.id); addSignalIcon(map, e.id); addFamousIcon(map, e.id) })
       map.addControl(new maplibregl.NavigationControl(), 'top-right')
       const scale = new maplibregl.ScaleControl({ unit: unitsRef.current === 'mi' ? 'imperial' : 'metric' })
       scaleRef.current = scale
@@ -153,7 +161,7 @@ export function MapView(props: Props) {
       }
 
       map.on('load', () => {
-        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'places', 'me']) {
+        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'places', 'me']) {
           map.addSource(id, { type: 'geojson', data: empty })
         }
         map.addLayer({ id: 'lit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], true],
@@ -194,6 +202,21 @@ export function MapView(props: Props) {
             'icon-ignore-placement': true,
           },
           paint: { 'icon-opacity': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.4, 1] } })
+        // Famous places: best known first, so they win when labels collide.
+        map.addLayer({ id: 'famous', type: 'symbol', source: 'famous',
+          layout: {
+            'icon-image': ['concat', 'fam-', ['get', 'icon']],
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 0.8, 12, 0.9],
+            'text-field': ['get', 'name'],
+            'text-font': ['Noto Sans Bold'],
+            'text-size': ['interpolate', ['linear'], ['zoom'], 3, 11, 10, 13],
+            'text-anchor': 'top',
+            'text-offset': [0, 1.2],
+            'text-max-width': 9,
+            'text-optional': true,
+            'symbol-sort-key': ['-', 0, ['get', 'fame']],
+          },
+          paint: { 'text-color': '#2b2350', 'text-halo-color': '#ffffff', 'text-halo-width': 1.6 } })
         map.addLayer({ id: 'places-selected', type: 'circle', source: 'places', filter: ['==', ['get', 'selected'], true],
           paint: { 'circle-radius': 16, 'circle-color': ['get', 'color'], 'circle-opacity': 0.22 } })
         map.addLayer({ id: 'places', type: 'symbol', source: 'places',
@@ -222,6 +245,12 @@ export function MapView(props: Props) {
           if (id) placeClickRef.current(String(id))
         })
 
+        map.on('click', 'famous', (e) => {
+          const id = e.features?.[0]?.properties?.id
+          const p = famousRef.current.find((f) => f.id === id)
+          if (p) famousClickRef.current(p)
+        })
+
         map.on('click', 'restrooms', (e) => {
           const p = e.features?.[0]?.properties
           if (!p) return
@@ -240,7 +269,7 @@ export function MapView(props: Props) {
             `<strong>${escapeHtml(p.label)}</strong><br>${escapeHtml(p.ago)}${p.note ? `<br>"${escapeHtml(p.note)}"` : ''}`,
           ).addTo(map)
         })
-        for (const id of ['restrooms', 'reports', 'places']) {
+        for (const id of ['restrooms', 'reports', 'places', 'famous']) {
           map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
           map.on('mouseleave', id, () => { map.getCanvas().style.cursor = pickModeRef.current ? 'crosshair' : '' })
         }
@@ -249,7 +278,7 @@ export function MapView(props: Props) {
       })
 
       map.on('click', (e) => {
-        const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places'] }) : []
+        const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places', 'famous'] }) : []
         if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
       })
       map.on('contextmenu', (e) => {
@@ -419,6 +448,11 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     if (!ready) return
+    setData('famous', { type: 'FeatureCollection', features: famous.map((f) => point(f.coords, { id: f.id, name: f.name, icon: f.icon, fame: f.fame })) })
+  }, [famous, ready])
+
+  useEffect(() => {
+    if (!ready) return
     setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation, { acc: myAccuracy ?? 0 })] } : empty)
   }, [myLocation, myAccuracy, ready])
 
@@ -547,7 +581,7 @@ function applyNames(map: MlMap, nameView: string | null) {
   }
 }
 
-const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'places', 'me', WV_SOURCE]
+const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'places', 'me', WV_SOURCE]
 
 /** Keep our sources and layers when the base style changes: borders under labels, the rest on top. */
 function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification {
@@ -659,4 +693,31 @@ function addSignalIcon(map: MlMap, id: string) {
     }
   }
   map.addImage(id, ctx.getImageData(0, 0, w, h), { pixelRatio: 2 })
+}
+
+/** A round white badge with the place's emoji, drawn at 2x. */
+function addFamousIcon(map: MlMap, id: string) {
+  if (!id.startsWith('fam-') || map.hasImage(id)) return
+  const size = 56, r = 24, c = size / 2
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.shadowColor = 'rgba(43,35,80,0.35)'
+  ctx.shadowBlur = 5
+  ctx.shadowOffsetY = 2
+  ctx.beginPath()
+  ctx.arc(c, c, r, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  ctx.lineWidth = 3
+  ctx.strokeStyle = '#5b3df5'
+  ctx.stroke()
+  ctx.font = '26px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(id.slice(4), c, c + 2)
+  map.addImage(id, ctx.getImageData(0, 0, size, size), { pixelRatio: 2 })
 }

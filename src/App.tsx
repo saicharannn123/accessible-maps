@@ -10,6 +10,7 @@ import { locationHelp, useLiveLocation } from './lib/useLiveLocation'
 import { CATEGORIES, CATEGORY_BY_ID, fetchNearby, type NearbyPlace } from './lib/places'
 import { loadReports, saveReports, timeAgo } from './lib/reports'
 import { loadSignals, SIGNAL_MIN_ZOOM, type Signal } from './lib/signals'
+import { loadFamous, FAMOUS_MIN_ZOOM, FAMOUS_MAX_ZOOM, type FamousPlace } from './lib/famous'
 import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
 import { reverseGeocode } from './lib/geocode'
@@ -119,6 +120,9 @@ export default function App() {
   const [signals, setSignals] = useState<Signal[]>([])
   const signalCtrl = useRef<AbortController | null>(null)
   const signalTimer = useRef<number | undefined>(undefined)
+  const [famous, setFamous] = useState<FamousPlace[]>([])
+  const famousCtrl = useRef<AbortController | null>(null)
+  const famousTimer = useRef<number | undefined>(undefined)
   const viewTimer = useRef<number | undefined>(undefined)
 
   const [autoUnits] = useState(browserUnits)
@@ -242,6 +246,18 @@ export default function App() {
         signalCtrl.current = ctrl
         loadSignals(bbox, ctrl.signal).then(setSignals).catch(() => {})
       }, 350)
+    }
+    // Famous places when looking at a country or region; hidden at street level.
+    window.clearTimeout(famousTimer.current)
+    famousCtrl.current?.abort()
+    if (zoom >= FAMOUS_MIN_ZOOM && zoom < FAMOUS_MAX_ZOOM) {
+      famousTimer.current = window.setTimeout(() => {
+        const ctrl = new AbortController()
+        famousCtrl.current = ctrl
+        loadFamous(bbox, zoom, ctrl.signal).then(setFamous).catch(() => {})
+      }, 450)
+    } else {
+      setFamous((f) => (f.length ? [] : f))
     }
     window.clearTimeout(viewTimer.current)
     viewCtrl.current?.abort()
@@ -454,6 +470,16 @@ export default function App() {
         layers={layers}
         flyTo={flyTo}
         signals={signals}
+        famous={famous}
+        onFamousClick={(f) => {
+          const p: Place = { name: f.name, detail: f.kind, coords: f.coords, icon: f.icon, photo: f.photo, about: f.about, wiki: f.wiki }
+          remember({ kind: 'place', place: { name: p.name, detail: p.detail, coords: p.coords } })
+          setSearchPin(p)
+          setSelectedId(null)
+          setTab('nearby')
+          setSheetOpen(true)
+          panelScroll.current?.scrollTo({ top: 0 })
+        }}
         markPin={tab === 'nearby' && !selected ? searchPin?.coords ?? null : tab === 'report' ? draft.coords : null}
         pickMode={pick != null || tab === 'route' || tab === 'report'}
         places={tab === 'nearby' ? shownPlaces : selected ? [selected] : []}
@@ -560,8 +586,13 @@ export default function App() {
             {searchPin && (
               <div className="place-card pin-card">
                 <button type="button" className="pin-close" aria-label="Remove pin" onClick={() => setSearchPin(null)}>✕</button>
-                <h2>📍 {searchPin.name}</h2>
+                {searchPin.photo && <img className="pin-photo" src={searchPin.photo} alt="" loading="lazy"
+                  onError={(e) => { e.currentTarget.style.display = 'none' }} />}
+                <h2>{searchPin.icon ?? '📍'} {searchPin.name}</h2>
                 {searchPin.detail && <p className="muted">{searchPin.detail}</p>}
+                {searchPin.about && <p className="pin-about">{searchPin.about[0].toUpperCase() + searchPin.about.slice(1)}</p>}
+                <p className="muted small">{searchPin.coords[1].toFixed(4)}, {searchPin.coords[0].toFixed(4)}
+                  {searchPin.wiki && <> · <a href={searchPin.wiki} target="_blank" rel="noreferrer">Read more on Wikipedia</a></>}</p>
                 <div className="actions">
                   <button type="button" className="primary" onClick={() => {
                     setTo(searchPin); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route')
