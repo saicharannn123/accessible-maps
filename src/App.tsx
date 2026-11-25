@@ -14,6 +14,7 @@ import { loadFamous, FAMOUS_MIN_ZOOM, FAMOUS_MAX_ZOOM, type FamousPlace } from '
 import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
 import { navProgress, stepPositions } from './lib/navigation'
+import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
 import { reverseGeocode } from './lib/geocode'
 import { loadSettings, saveSettings } from './lib/settings'
 import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
@@ -433,6 +434,24 @@ export default function App() {
   // Turn-by-turn navigation: follows your live location, moves to the next step as you pass each
   // turn, reroutes when you leave the route, and reads the next step aloud.
   const [voiceOn, setVoiceOn] = useState(true)
+  const [markerMenu, setMarkerMenu] = useState(false)
+  const setMarker = (marker: MarkerStyle) => setSettings((s) => ({ ...s, marker }))
+  const markerChoices = (
+    <div className="marker-grid" role="radiogroup" aria-label="Your location marker">
+      {MARKER_STYLES.map((m) => {
+        const shown = resolveMarker(m.id, navigating, settings.travelMode)
+        const on = (settings.marker ?? 'auto') === m.id
+        return (
+          <button key={m.id} type="button" role="radio" aria-checked={on} className={on ? 'active' : ''} title={m.hint}
+            onClick={() => { setMarker(m.id); setMarkerMenu(false) }}>
+            {/* Static markup from lib/marker.ts, no user text. */}
+            <span className="marker-preview" dangerouslySetInnerHTML={{ __html: markerHtml(shown) }} />
+            <span>{m.label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
   const stepAlong = useMemo(() => (route ? stepPositions(route) : []), [route])
   const nav = navigating && route && myLocation ? navProgress(route, myLocation, stepAlong) : null
   const say = useCallback((text: string) => {
@@ -562,6 +581,7 @@ export default function App() {
         follow={follow && loc.status === 'live'}
         navigating={navigating}
         navBearing={nav?.bearing ?? 0}
+        marker={resolveMarker(settings.marker ?? 'auto', navigating, settings.travelMode)}
         onUserMove={() => { setFollow(false); setUserPanned(true) }}
         fitTo={fitTo}
         onPlaceClick={selectPlace}
@@ -606,9 +626,21 @@ export default function App() {
             <span>{nav ? `${formatDistance(nav.remainingMeters)} · arrive ${new Date(now.getTime() + (route!.durationSeconds * nav.remainingMeters * 1000) / Math.max(route!.distanceMeters, 1)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Getting ready'}</span>
           </div>
           {!follow && <button type="button" className="nav-btn" onClick={() => setFollow(true)}>Re-center</button>}
+          <button type="button" className="nav-btn icon" aria-expanded={markerMenu} aria-label="Change your location marker" title="Change your location marker"
+            onClick={() => setMarkerMenu((o) => !o)}>
+            <span className="marker-preview small" dangerouslySetInnerHTML={{ __html: markerHtml(resolveMarker(settings.marker ?? 'auto', true, settings.travelMode)) }} />
+          </button>
           <button type="button" className="nav-btn icon" aria-pressed={voiceOn} aria-label={voiceOn ? 'Mute voice' : 'Turn voice on'}
             onClick={() => { setVoiceOn((v) => !v); try { window.speechSynthesis?.cancel() } catch { /* ignore */ } }}>{voiceOn ? '🔊' : '🔇'}</button>
           <button type="button" className="nav-btn end" onClick={endNav}>{nav?.arrived ? 'Done' : 'End'}</button>
+        </div>
+      )}
+
+      {navigating && markerMenu && (
+        <div className="marker-sheet" role="dialog" aria-label="Your location marker">
+          <div className="marker-sheet-head"><strong>Your marker</strong>
+            <button type="button" className="icon-btn" aria-label="Close" onClick={() => setMarkerMenu(false)}>✕</button></div>
+          {markerChoices}
         </div>
       )}
 
@@ -1005,6 +1037,10 @@ export default function App() {
 
         {tab === 'settings' && (
           <section>
+            <div className="field">
+              <span>Your location marker</span>
+              {markerChoices}
+            </div>
             <div className="field">
               <span>Map look</span>
               <div className="seg" role="radiogroup" aria-label="Map look">

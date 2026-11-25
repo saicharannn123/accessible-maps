@@ -18,6 +18,8 @@ import { CATEGORIES, CATEGORY_BY_ID, type NearbyPlace } from '../lib/places'
 import { REPORT_LABELS } from '../lib/types'
 import type { LngLat, Report, RouteResult } from '../lib/types'
 import { timeAgo } from '../lib/reports'
+import { markerHtml, ROTATES, type DrawnMarker } from '../lib/marker'
+import { bearingDeg } from '../lib/navigation'
 
 export interface Layers {
   restrooms: boolean
@@ -56,6 +58,8 @@ interface Props {
   navigating?: boolean
   /** Direction of the route ahead while navigating, in degrees. */
   navBearing?: number
+  /** How to draw your own position. */
+  marker?: DrawnMarker
   /** The visitor dragged or zoomed the map themselves. */
   onUserMove: () => void
   /** Show country borders as this country officially sees them; null = as on the ground (OpenStreetMap). */
@@ -108,7 +112,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, navigating = false, navBearing = 0, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, navigating = false, navBearing = 0, marker = 'dot', fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -244,8 +248,7 @@ export function MapView(props: Props) {
             'circle-color': '#1a73e8', 'circle-opacity': 0.15,
             'circle-stroke-color': '#1a73e8', 'circle-stroke-opacity': 0.3, 'circle-stroke-width': 1,
           } })
-        map.addLayer({ id: 'me', type: 'circle', source: 'me',
-          paint: { 'circle-radius': 7, 'circle-color': '#1a73e8', 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 } })
+        // The position itself is an HTML marker (see below), so it can be a dot, an arrow, a walker…
 
         map.on('click', 'places', (e) => {
           const id = e.features?.[0]?.properties?.id
@@ -463,6 +466,47 @@ export function MapView(props: Props) {
     if (!ready) return
     setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation, { acc: myAccuracy ?? 0 })] } : empty)
   }, [myLocation, myAccuracy, ready])
+
+  // Which way you're heading: the route's direction while navigating, otherwise worked out from
+  // how you've moved (ignoring GPS jitter of a few meters).
+  const headingFrom = useRef<LngLat | null>(null)
+  const [movedHeading, setMovedHeading] = useState<number | null>(null)
+  useEffect(() => {
+    if (!myLocation) return
+    const last = headingFrom.current
+    if (!last) { headingFrom.current = myLocation; return }
+    if (distanceMeters(last, myLocation) < 5) return
+    headingFrom.current = myLocation
+    setMovedHeading(bearingDeg(last, myLocation))
+  }, [myLocation])
+  const heading = navigating ? navBearing : movedHeading
+
+  // Your position marker. Arrow-like markers turn with the map so they point the real direction.
+  const meMarker = useRef<maplibregl.Marker | null>(null)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    if (!myLocation) { meMarker.current?.remove(); meMarker.current = null; return }
+    if (!meMarker.current) {
+      const el = document.createElement('div')
+      el.className = 'me-marker'
+      el.setAttribute('aria-label', 'Your location')
+      meMarker.current = new maplibregl.Marker({ element: el, anchor: 'center', rotationAlignment: 'map', pitchAlignment: 'viewport' })
+        .setLngLat(myLocation).addTo(map)
+    }
+    const m = meMarker.current
+    const el = m.getElement()
+    if (el.dataset.style !== marker) {
+      el.dataset.style = marker
+      el.innerHTML = markerHtml(marker)
+      // Upright markers stay upright; turning ones follow the map's compass so they point the real way.
+      m.setRotationAlignment(ROTATES[marker] ? 'map' : 'viewport')
+    }
+    el.classList.toggle('no-heading', ROTATES[marker] && heading == null)
+    m.setLngLat(myLocation)
+    m.setRotation(ROTATES[marker] ? heading ?? 0 : 0)
+  }, [myLocation, marker, heading, ready])
+  useEffect(() => () => { meMarker.current?.remove() }, [])
 
   // Follow the visitor. The first fix jumps straight there (a long animated flight across the
   // country leaves half-loaded tiles behind). After that, only glide when they've really moved,
