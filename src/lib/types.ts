@@ -62,12 +62,23 @@ export interface RouteWarning {
   coords?: LngLat
 }
 
+/** One turn-by-turn instruction. */
+export interface RouteStep {
+  text: string
+  /** Distance to walk or drive after this instruction, before the next one. */
+  distanceMeters: number
+  coords: LngLat
+  /** A small arrow for the kind of turn. */
+  icon: string
+}
+
 export interface RouteResult {
   geometry: LngLat[]
   distanceMeters: number
   durationSeconds: number
   stepFreeVerified: boolean
   warnings: RouteWarning[]
+  steps: RouteStep[]
 }
 
 export interface Settings {

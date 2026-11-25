@@ -409,6 +409,7 @@ export default function App() {
     try {
       const points = [fromPlace.coords, ...stopPlaces.map((p) => p.coords), to.coords]
       setRouteState({ key, route: await planRoute(points, settings, loadRouteAccess, reports), error: null })
+      setSheetOpen(true)
       // Skip the moment before a dropped pin gets its street name; the named trip is saved next.
       if (to.name !== 'Dropped pin' && from?.name !== 'Dropped pin') remember({ kind: 'route', from, to, mode: settings.travelMode })
     } catch (e) {
@@ -420,6 +421,18 @@ export default function App() {
 
 
   useEffect(() => { findRouteRef.current = () => { void findRoute() } })
+
+  // When a route comes in, bring its card into view: on phones it sits below the trip form,
+  // under the fold of the bottom sheet, so it looked like no directions came back at all.
+  const routeCard = useRef<HTMLDivElement>(null)
+  const [showSteps, setShowSteps] = useState(true)
+  useEffect(() => {
+    if (!route) return
+    const box = panelScroll.current, card = routeCard.current
+    if (!box || !card) return
+    const top = card.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 12
+    box.scrollTo({ top, behavior: 'smooth' })
+  }, [route])
 
   // Details for the chosen destination, from what is loaded on the map.
   const destInfo = useMemo(() => {
@@ -796,7 +809,7 @@ export default function App() {
             {routeError && <p className="error" role="alert">{routeError}</p>}
 
             {route && (
-              <div className="route-summary">
+              <div className="route-summary" ref={routeCard}>
                 <div className="route-hero">
                   <span className="route-mode" aria-hidden="true">{TRAVEL_MODES[mode].icon}</span>
                   <div className="route-stats">
@@ -805,6 +818,7 @@ export default function App() {
                   </div>
                   <div className="route-eta"><span>Arrive</span><strong>{arrival}</strong></div>
                 </div>
+                {to && <p className="route-to"><span className="muted">To</span> <strong>{to.name}</strong>{to.detail ? <span className="muted">, {to.detail}</span> : null}</p>}
                 {mode === 'accessible' && (
                   <p className={route.stepFreeVerified ? 'ok' : 'warn'}>
                     {route.stepFreeVerified ? 'Avoids steps' : 'Not verified step-free'}
@@ -820,6 +834,27 @@ export default function App() {
                       </li>
                     ))}
                   </ul>
+                )}
+                {route.steps.length > 0 && (
+                  <div className="route-steps">
+                    <button type="button" className="steps-toggle" aria-expanded={showSteps} onClick={() => setShowSteps((v) => !v)}>
+                      <span>{showSteps ? 'Hide directions' : 'Show directions'}</span>
+                      <span className="muted">{route.steps.length} steps {showSteps ? '▴' : '▾'}</span>
+                    </button>
+                    {showSteps && (
+                      <ol>
+                        {route.steps.map((st, i) => (
+                          <li key={i}>
+                            <button type="button" onClick={() => { setFollow(false); fly(st.coords) }}>
+                              <span className="step-icon" aria-hidden="true">{st.icon}</span>
+                              <span className="step-text">{st.text}</span>
+                              {st.distanceMeters >= 1 && <span className="step-dist">{formatDistance(st.distanceMeters)}</span>}
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
                 )}
               </div>
             )}

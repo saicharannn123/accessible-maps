@@ -148,9 +148,12 @@ export async function reverseGeocode(c: LngLat, signal?: AbortSignal): Promise<P
   if (!f || distanceMeters(c, f.geometry.coordinates) > 150) return null
   const p = f.properties
   const street = [p.housenumber, p.street].filter(Boolean).join(' ')
-  const name = p.name || street
+  // A business name only fits when the pin is right on it; otherwise "Pressed" (a nearby shop)
+  // reads like a bug, so name the spot by its street instead.
+  const onPlace = !!p.name && distanceMeters(c, f.geometry.coordinates) <= 40
+  const name = (onPlace ? p.name : street) || p.name || street
   if (!name) return null
-  const detail = [p.name ? street : '', p.city, p.state].filter(Boolean).join(', ')
+  const detail = [name === p.name ? street : '', p.city, p.state].filter(Boolean).join(', ')
   // Keep the exact spot that was tapped; the address just names it.
   return { name, detail, coords: c }
 }
