@@ -108,6 +108,35 @@ function routePadding() {
   return { top: 90, bottom: 110, left: 80, right: 440 }
 }
 
+/** How long the marker takes to glide from one GPS fix to the next (phones report about once a second). */
+const GLIDE_MS = 1000
+
+/**
+ * Move the position marker smoothly to a new fix and turn it the short way round, so a car or
+ * arrow drives along instead of jumping. Big jumps (a first fix, a GPS glitch) snap straight there.
+ */
+function glideMarker(m: maplibregl.Marker, to: LngLat, toRot: number, state: { current: { raf: number } }) {
+  cancelAnimationFrame(state.current.raf)
+  const fromLL = m.getLngLat()
+  const from: LngLat = [fromLL.lng, fromLL.lat]
+  const fromRot = m.getRotation()
+  const turn = ((toRot - fromRot + 540) % 360) - 180
+  if (distanceMeters(from, to) > 300 || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    m.setLngLat(to); m.setRotation(toRot); return
+  }
+  const start = performance.now()
+  const step = (now: number) => {
+    const t = Math.min(1, (now - start) / GLIDE_MS)
+    // Rotation eases quickly at first so turns feel responsive; position moves at a steady speed
+    // to match the camera, which follows linearly over the same time.
+    const r = 1 - (1 - t) * (1 - t)
+    m.setLngLat([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t])
+    m.setRotation(fromRot + turn * r)
+    if (t < 1) state.current.raf = requestAnimationFrame(step)
+  }
+  state.current.raf = requestAnimationFrame(step)
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 }
@@ -491,6 +520,7 @@ export function MapView(props: Props) {
 
   // Your position marker. Arrow-like markers turn with the map so they point the real direction.
   const meMarker = useRef<maplibregl.Marker | null>(null)
+  const glide = useRef({ raf: 0 })
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map) return
@@ -511,10 +541,9 @@ export function MapView(props: Props) {
       m.setRotationAlignment(ROTATES[marker] ? 'map' : 'viewport')
     }
     el.classList.toggle('no-heading', ROTATES[marker] && heading == null)
-    m.setLngLat(myLocation)
-    m.setRotation(ROTATES[marker] ? heading ?? 0 : 0)
+    glideMarker(m, myLocation, ROTATES[marker] ? heading ?? 0 : 0, glide)
   }, [myLocation, marker, heading, ready])
-  useEffect(() => () => { meMarker.current?.remove() }, [])
+  useEffect(() => () => { meMarker.current?.remove(); cancelAnimationFrame(glide.current.raf) }, [])
 
   // Follow the visitor. The first fix jumps straight there (a long animated flight across the
   // country leaves half-loaded tiles behind). After that, only glide when they've really moved,
@@ -528,7 +557,8 @@ export function MapView(props: Props) {
       // Close up, turned the way you're going, with you in the lower part of the screen so
       // more of the road ahead shows above the direction banner.
       lastFollowed.current = myLocation
-      map.easeTo({ center: myLocation, zoom: 17.5, bearing: navBearing, pitch: 45, duration: 800,
+      const driving = marker === 'car'
+      map.easeTo({ center: myLocation, zoom: driving ? 16.8 : 17.5, bearing: navBearing, pitch: driving ? 58 : 45, duration: GLIDE_MS, easing: (t) => t,
         offset: [0, Math.round(map.getContainer().clientHeight * 0.18)] })
       return
     }
@@ -541,7 +571,7 @@ export function MapView(props: Props) {
     if (map.isMoving() || distanceMeters(last, myLocation) < 8) return
     lastFollowed.current = myLocation
     map.easeTo({ center: myLocation, duration: 500 })
-  }, [myLocation, follow, ready, navigating, navBearing])
+  }, [myLocation, follow, ready, navigating, navBearing, marker])
 
   // Leaving navigation: flatten the map and point it north again.
   const navigatingRef = useRef(navigating)
