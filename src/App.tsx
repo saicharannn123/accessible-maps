@@ -14,6 +14,7 @@ import { loadFamous, FAMOUS_MIN_ZOOM, FAMOUS_MAX_ZOOM, type FamousPlace } from '
 import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
 import { navProgress, stepPositions } from './lib/navigation'
+import { useSheetDrag, type SheetSnap } from './lib/useSheetDrag'
 import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
 import { reverseGeocode } from './lib/geocode'
 import { loadSettings, saveSettings } from './lib/settings'
@@ -117,7 +118,12 @@ export default function App() {
   // The place you picked from the search box on the Near me tab, shown as a red pin.
   const [searchPin, setSearchPin] = useState<Place | null>(null)
   const [draft, setDraft] = useState<{ coords: LngLat | null; type: ReportType; note: string }>({ coords: null, type: 'broken-elevator', note: '' })
-  const [sheetOpen, setSheetOpen] = useState(true)
+  // Phone bottom sheet: peek (just the title), half, or full. Swipes move it between them.
+  const [sheet, setSheet] = useState<SheetSnap>('half')
+  const sheetOpen = sheet !== 'peek'
+  const setSheetOpen = useCallback((open: boolean) => setSheet((s) => (open ? (s === 'peek' ? 'half' : s) : 'peek')), [])
+  const panelRef = useRef<HTMLElement>(null)
+  useSheetDrag(panelRef, panelScroll, sheet, setSheet)
   const viewCtrl = useRef<AbortController | null>(null)
   const [signals, setSignals] = useState<Signal[]>([])
   const signalCtrl = useRef<AbortController | null>(null)
@@ -218,7 +224,7 @@ export default function App() {
     setSelectedId(id)
     setTab('nearby')
     setSheetOpen(true)
-  }, [rememberPlace])
+  }, [rememberPlace, setSheetOpen])
 
   // Bring the place card into view when a place is picked from the list or the map.
   useEffect(() => { if (selectedId) panelScroll.current?.scrollTo({ top: 0 }) }, [selectedId])
@@ -318,7 +324,7 @@ export default function App() {
     fly(c, true)
     if (pick) setSheetOpen(true)
     setPick(null)
-  }, [pick, tab, activeField, dropPin, fly])
+  }, [pick, tab, activeField, dropPin, fly, setSheetOpen])
 
   // "Pick on map": on phones, tuck the panel away so the whole map is free to tap.
   const startPick = (field: Exclude<Pick, null>) => {
@@ -692,8 +698,9 @@ export default function App() {
         </div>
       )}
 
-      <aside className={`panel ${sheetOpen ? 'open' : 'closed'}`}>
-        <button type="button" className="sheet-handle" onClick={() => setSheetOpen((o) => !o)} aria-label={sheetOpen ? 'Hide panel' : 'Show panel'} />
+      <aside ref={panelRef} className={`panel ${sheetOpen ? 'open' : 'closed'} sheet-${sheet}`}>
+        <button type="button" className="sheet-handle" onClick={() => setSheet((s) => (s === 'peek' ? 'half' : s === 'half' ? 'full' : 'peek'))}
+          aria-label={sheet === 'peek' ? 'Show panel' : sheet === 'half' ? 'Expand panel' : 'Hide panel'} />
         <div className="panel-scroll" ref={panelScroll}>
         <header className="panel-head">
           <span className="panel-kicker">{TAB_INFO[tab].icon} {TAB_INFO[tab].label}</span>

@@ -145,6 +145,13 @@ section h2 { font-size: 1rem; margin: 8px 0 0; }
   :root { --gap: 8px; }
   .panel { top: auto; left: var(--gap); right: var(--gap); bottom: calc(var(--dock-h) + var(--gap) * 2); width: auto; max-height: 58%; border-radius: 22px; }
   .panel.closed { max-height: 78px; overflow: hidden; }
+  /* Swipe stops; heights match snapHeights() in lib/useSheetDrag.ts. */
+  .panel.sheet-full { max-height: calc(100% - var(--dock-h) - var(--gap) * 2 - 80px); height: calc(100% - var(--dock-h) - var(--gap) * 2 - 80px); }
+  .panel { transition: max-height .32s cubic-bezier(.2,.8,.2,1), height .32s cubic-bezier(.2,.8,.2,1); touch-action: pan-y; }
+  .panel.dragging { transition: none; }
+  .panel.dragging .panel-scroll { overflow: hidden; }
+  .panel-head { cursor: grab; }
+  .sheet-handle { width: 72px !important; height: 22px !important; top: 2px !important; padding: 8px 12px !important; }
   .panel::before { height: 4px; }
   .panel-scroll { padding-top: 16px; }
   .sheet-handle { display: block; position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 48px; height: 12px; border: 0; background: none; z-index: 1; }
