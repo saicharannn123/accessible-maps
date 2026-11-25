@@ -1,0 +1,80 @@
+# Builds BM Locator's own map tiles from OpenStreetMap with Planetiler, in the OpenMapTiles
+# layout our map styles use, and stores them as the "map-data" release. The Pages deploy copies
+# that file into the site at tiles/bm-locator.pmtiles, and the app serves it for every tile inside
+# its area (src/lib/ownTiles.ts). Run it from Actions → "Build map data" → Run workflow; it also
+# refreshes itself on the 1st of every month so the map keeps up with OpenStreetMap edits.
+#
+# The area is any Geofabrik extract name, e.g. new-jersey, new-york, us-northeast, india, monaco.
+# GitHub Pages sites are limited to 1 GB, so the job stops if the file is bigger than 950 MB.
+name: Build map data
+
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: Geofabrik area to build (e.g. new-jersey, us-northeast)
+        default: new-jersey
+        required: true
+  schedule:
+    - cron: '17 6 1 * *'
+  pull_request:
+    paths: [.github/workflows/build-map-data.yml]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: map-data
+  cancel-in-progress: false
+
+env:
+  # Pull requests only build tiny Monaco to prove the pipeline works; they never publish.
+  AREA: ${{ github.event_name == 'pull_request' && 'monaco' || inputs.area || vars.MAP_AREA || 'new-jersey' }}
+  PLANETILER_VERSION: '0.9.2'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Download Planetiler
+        run: curl -fsSL -o planetiler.jar "https://github.com/onthegomap/planetiler/releases/download/v${PLANETILER_VERSION}/planetiler.jar"
+      - name: Build tiles for ${{ env.AREA }}
+        run: |
+          java -Xmx5g -jar planetiler.jar \
+            --area="$AREA" --download --force \
+            --output=bm-locator.pmtiles \
+            --name="BM Locator" \
+            --attribution='© OpenStreetMap contributors · © OpenMapTiles' \
+            --maxzoom=14
+          ls -lh bm-locator.pmtiles
+      - name: Check it fits on GitHub Pages
+        run: |
+          size=$(stat -c %s bm-locator.pmtiles)
+          echo "Tile file: $((size / 1048576)) MB for $AREA" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$size" -gt 996147200 ]; then
+            echo "::error::$AREA is $((size / 1048576)) MB, over the 950 MB we can put on GitHub Pages. Pick a smaller area or host the file elsewhere."
+            exit 1
+          fi
+      - name: Publish as the map-data release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view map-data >/dev/null 2>&1 || \
+            gh release create map-data --title "BM Locator map data" --latest=false \
+              --notes "Vector tiles built from OpenStreetMap (© OpenStreetMap contributors, ODbL) with Planetiler, OpenMapTiles schema (© OpenMapTiles). Rebuilt by the Build map data workflow."
+          gh release upload map-data bm-locator.pmtiles --clobber
+          gh release edit map-data --notes "Area: $AREA. Built $(date -u +%Y-%m-%d) from OpenStreetMap (© OpenStreetMap contributors, ODbL) with Planetiler $PLANETILER_VERSION, OpenMapTiles schema (© OpenMapTiles)."
+      - name: Redeploy the site with the new tiles
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run deploy-pages.yml --ref main

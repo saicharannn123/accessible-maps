@@ -28,6 +28,16 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # Our own map tiles (built by build-map-data.yml) ride along with the site when they exist.
+      - name: Add BM Locator map data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist/tiles
+          gh release download map-data -p bm-locator.pmtiles -D dist/tiles \
+            && ls -lh dist/tiles \
+            || echo "No map-data release yet; the map uses OpenFreeMap tiles everywhere."
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
