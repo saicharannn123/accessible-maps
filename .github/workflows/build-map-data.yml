@@ -2,7 +2,8 @@
 # layout our map styles use, and stores them as the "map-data" release. The Pages deploy copies
 # that file into the site at tiles/bm-locator.pmtiles, and the app serves it for every tile inside
 # its area (src/lib/ownTiles.ts). Run it from Actions → "Build map data" → Run workflow; it also
-# refreshes itself on the 1st of every month so the map keeps up with OpenStreetMap edits.
+# rebuilds itself every day from Geofabrik's daily extract, so the home area is never more than a
+# day behind OpenStreetMap. The rest of the world comes from build-world-map.yml.
 #
 # The area is any Geofabrik extract name, e.g. new-jersey, new-york, us-northeast, india, monaco.
 # GitHub Pages sites are limited to 1 GB, so the job stops if the file is bigger than 950 MB.
@@ -16,7 +17,7 @@ on:
         default: new-jersey
         required: true
   schedule:
-    - cron: '17 6 1 * *'
+    - cron: '17 6 * * *' # every day, after Geofabrik publishes the day's extracts
   pull_request:
     paths: [.github/workflows/build-map-data.yml]
 

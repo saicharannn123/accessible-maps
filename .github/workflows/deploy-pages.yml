@@ -27,7 +27,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # The whole-world map lives on Cloudflare R2 (build-world-map.yml writes latest.txt there).
+      - name: Find the whole-world map
+        id: world
+        if: vars.R2_PUBLIC_URL != ''
+        env:
+          BASE: ${{ vars.R2_PUBLIC_URL }}
+        run: |
+          f=$(curl -fsSL --retry 3 "${BASE%/}/latest.txt" | tr -d '[:space:]' || true)
+          if [ -n "$f" ]; then echo "url=${BASE%/}/$f" >> "$GITHUB_OUTPUT"; echo "World map: $f"; else echo "No world map yet."; fi
       - run: npm run build
+        env:
+          VITE_MAP_DATA_URL: ${{ steps.world.outputs.url }}
       # Our own map tiles (built by build-map-data.yml) ride along with the site when they exist.
       - name: Add BM Locator map data
         env:
