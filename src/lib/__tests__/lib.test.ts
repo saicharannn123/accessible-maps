@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { distanceMeters, distanceToLine, formatDistance } from '../geo'
 import { buildQuery, parseElements } from '../overpass'
-import { findWarnings, orsRequest, osrmUrl } from '../routing'
+import { findWarnings, orsRequest, osrmSteps, osrmUrl } from '../routing'
 import type { LngLat, Settings } from '../types'
 
 const line: LngLat[] = [[-122.3400, 47.6000], [-122.3300, 47.6000]]
@@ -80,5 +80,37 @@ describe('travel modes', () => {
     expect(findWarnings(route, { ...wheelchair, travelMode: 'car' }, null, report)).toEqual([])
     expect(findWarnings(route, { ...wheelchair, travelMode: 'walk' }, null, report).map((w) => w.kind)).toEqual(['report'])
     expect(findWarnings(route, wheelchair, null, report).map((w) => w.kind)).toEqual(['not-verified', 'report'])
+  })
+})
+
+describe('turn-by-turn steps', () => {
+  it('writes plain-English OSRM instructions and marks stops', () => {
+    const at: [number, number] = [0, 0]
+    const steps = osrmSteps([
+      { steps: [
+        { distance: 120, name: 'Main Street', maneuver: { type: 'depart', location: at } },
+        { distance: 300, name: 'Oak Avenue', maneuver: { type: 'turn', modifier: 'left', location: at } },
+        { distance: 0, name: '', maneuver: { type: 'arrive', location: at } },
+      ] },
+      { steps: [
+        { distance: 50, name: '', maneuver: { type: 'depart', location: at } },
+        { distance: 80, name: 'Elm Road', maneuver: { type: 'roundabout', exit: 2, location: at } },
+        { distance: 60, name: 'Pine Lane', maneuver: { type: 'turn', modifier: 'slight right', location: at } },
+        { distance: 0, name: '', maneuver: { type: 'arrive', location: at } },
+      ] },
+    ])
+    expect(steps.map((s) => s.text)).toEqual([
+      'Head out on Main Street',
+      'Turn left onto Oak Avenue',
+      'Arrive at stop 1',
+      'Head out',
+      'At the roundabout, take the 2nd exit onto Elm Road',
+      'Bear right onto Pine Lane',
+      'Arrive at your destination',
+    ])
+    expect(steps[1].icon).toBe('↰')
+  })
+  it('asks OSRM for steps', () => {
+    expect(osrmUrl('walk', [[0, 0], [1, 1]])).toContain('steps=true')
   })
 })

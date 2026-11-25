@@ -2,7 +2,7 @@ import { ORS_KEY, ORS_URL, OSRM_URLS } from '../config'
 import { distanceToLine, formatDistance } from './geo'
 import type { AccessData } from './overpass'
 import { REPORT_LABELS } from './types'
-import type { LngLat, Report, RouteResult, RouteWarning, Settings, TravelMode } from './types'
+import type { LngLat, Report, RouteResult, RouteStep, RouteWarning, Settings, TravelMode } from './types'
 import { timeAgo } from './reports'
 
 interface BaseRoute {
@@ -10,6 +10,7 @@ interface BaseRoute {
   distanceMeters: number
   durationSeconds: number
   stepFreeVerified: boolean
+  steps: RouteStep[]
 }
 
 /** ORS accepts only these incline limits for the wheelchair profile. */
@@ -76,6 +77,7 @@ async function routeWithOrs(points: LngLat[], settings: Settings, key: string): 
   const data = await res.json()
   const f = data.features[0]
   return {
+    steps: orsSteps(f.properties.segments ?? [], f.geometry.coordinates),
     geometry: f.geometry.coordinates,
     distanceMeters: f.properties.summary.distance,
     durationSeconds: f.properties.summary.duration,
@@ -92,7 +94,7 @@ const ACCESSIBLE_SPEED = 1.0 // m/s, a relaxed pace of about 3.6 km/h
 export function osrmUrl(mode: TravelMode, points: LngLat[]): string {
   const base = mode === 'car' ? OSRM_URLS.car : mode === 'bike' ? OSRM_URLS.bike : OSRM_URLS.foot
   const coords = points.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join(';')
-  return `${base}/${coords}?overview=full&geometries=geojson`
+  return `${base}/${coords}?overview=full&geometries=geojson&steps=true`
 }
 
 async function routeWithOsrm(mode: TravelMode, points: LngLat[]): Promise<BaseRoute> {
@@ -104,6 +106,7 @@ async function routeWithOsrm(mode: TravelMode, points: LngLat[]): Promise<BaseRo
   const r = data.routes[0]
   const walking = mode === 'walk' || mode === 'accessible'
   return {
+    steps: osrmSteps(r.legs ?? []),
     geometry: r.geometry.coordinates,
     distanceMeters: r.distance,
     durationSeconds: walking ? r.distance / (mode === 'walk' ? WALK_SPEED : ACCESSIBLE_SPEED) : r.duration,
@@ -111,9 +114,76 @@ async function routeWithOsrm(mode: TravelMode, points: LngLat[]): Promise<BaseRo
   }
 }
 
+interface OsrmStep {
+  distance: number
+  name?: string
+  ref?: string
+  destinations?: string
+  maneuver: { type: string; modifier?: string; location: LngLat; exit?: number }
+}
+
+const ARROWS: Record<string, string> = {
+  uturn: '↶', 'sharp right': '↱', right: '↱', 'slight right': '↗', straight: '↑',
+  'slight left': '↖', left: '↰', 'sharp left': '↰',
+}
+
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
+
+/** Turn OSRM legs into plain-English steps. Exported for tests. */
+export function osrmSteps(legs: { steps?: OsrmStep[] }[]): RouteStep[] {
+  const out: RouteStep[] = []
+  legs.forEach((leg, li) => {
+    for (const s of leg.steps ?? []) {
+      const { type, modifier, location, exit } = s.maneuver
+      const road = s.name || s.ref || ''
+      const onto = road ? ` onto ${road}` : ''
+      const on = road ? ` on ${road}` : ''
+      const dir = modifier && modifier !== 'straight' ? modifier : null
+      let text: string
+      if (type === 'depart') text = `Head out${on}`
+      else if (type === 'arrive') {
+        // A multi-stop trip has one leg per stop; only the last one is the destination.
+        if (li < legs.length - 1) text = `Arrive at stop ${li + 1}`
+        else text = 'Arrive at your destination'
+      } else if (type === 'roundabout' || type === 'rotary') text = `At the roundabout, take the ${exit ? ordinal(exit) + ' ' : ''}exit${onto}`
+      else if (type === 'exit roundabout' || type === 'exit rotary') text = `Leave the roundabout${onto}`
+      else if (modifier === 'uturn') text = `Make a U-turn${on}`
+      else if (type === 'continue' || type === 'new name' || (!dir && type !== 'fork' && type !== 'merge')) {
+        // Skip "the street changes its name" steps that would just repeat themselves.
+        if (type === 'new name' && out.length && out[out.length - 1].text.endsWith(road)) { out[out.length - 1].distanceMeters += s.distance; continue }
+        text = `Continue${onto || on}`
+      } else if (type === 'fork') text = `Keep ${dir?.includes('left') ? 'left' : 'right'} at the fork${onto}`
+      else if (type === 'merge') text = `Merge${dir ? ' ' + dir.replace('slight ', '') : ''}${onto}`
+      else if (type === 'on ramp') text = `Take the ramp${dir ? ' on the ' + dir.replace(/^(slight|sharp) /, '') : ''}${s.destinations ? ' toward ' + s.destinations : ''}`
+      else if (type === 'off ramp') text = `Take the exit${dir ? ' on the ' + dir.replace(/^(slight|sharp) /, '') : ''}${s.destinations ? ' toward ' + s.destinations : onto}`
+      else if (type === 'end of road') text = `At the end of the road, turn ${dir?.includes('left') ? 'left' : 'right'}${onto}`
+      else text = `${dir?.startsWith('slight') ? 'Bear' : 'Turn'} ${dir?.replace(/^(slight|sharp) /, '')}${onto}`
+      const icon = type === 'depart' ? '●' : type === 'arrive' ? '⚑' : type.includes('roundabout') || type.includes('rotary') ? '⟳' : ARROWS[modifier ?? 'straight'] ?? '↑'
+      out.push({ text, distanceMeters: s.distance, coords: location, icon })
+    }
+  })
+  return out
+}
+
+/** OpenRouteService segments carry ready-made instructions; we only add places and arrows. */
+export function orsSteps(
+  segments: { steps?: { instruction: string; distance: number; type: number; way_points: [number, number] }[] }[],
+  line: LngLat[],
+): RouteStep[] {
+  // ORS step types: 0 left, 1 right, 2 sharp left, 3 sharp right, 4 slight left, 5 slight right,
+  // 6 straight, 7 roundabout, 8 exit roundabout, 9 U-turn, 10 goal, 11 depart, 12 keep left, 13 keep right.
+  const icons = ['↰', '↱', '↰', '↱', '↖', '↗', '↑', '⟳', '⟳', '↶', '⚑', '●', '↖', '↗']
+  return segments.flatMap((seg) => (seg.steps ?? []).map((s) => ({
+    text: s.instruction,
+    distanceMeters: s.distance,
+    coords: line[s.way_points[0]] ?? line[0],
+    icon: icons[s.type] ?? '↑',
+  })))
+}
+
 /** Check a route against map obstacles, lighting and user reports. Exported for tests. */
 export function findWarnings(
-  route: BaseRoute,
+  route: Omit<BaseRoute, 'steps'>,
   settings: Settings,
   access: AccessData | null,
   reports: Report[],

@@ -409,6 +409,21 @@ section > .search input:focus { background-color: #fff; }
 .route-eta span { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; opacity: .8; }
 .route-eta strong { font-family: var(--font-display); font-size: 1rem; }
 .warnings li { border-radius: 12px; }
+.route-to { margin: 0; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.route-to strong { color: var(--ink); }
+/* Turn-by-turn list */
+.route-steps { display: flex; flex-direction: column; gap: 4px; }
+.steps-toggle { text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; border: 0; border-radius: 12px;
+  background: var(--brand-soft); color: var(--brand-dark); font: inherit; font-weight: 700; padding: 10px 12px; cursor: pointer; min-height: 44px; }
+.steps-toggle .muted { font-weight: 600; font-size: .82rem; }
+.route-steps ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.route-steps li + li { border-top: 1px solid #eeeaf9; }
+.route-steps li button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; background: none; font: inherit;
+  color: var(--ink); padding: 9px 2px; cursor: pointer; min-height: 44px; }
+.route-steps li button:hover { background: #faf9ff; }
+.step-icon { flex: none; width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); font-weight: 800; }
+.step-text { flex: 1; min-width: 0; font-size: .92rem; }
+.step-dist { flex: none; font-size: .8rem; color: #6b7280; }
 
 /* Trip boxes */
 .trip-points > li .search input { background: var(--surface); }
