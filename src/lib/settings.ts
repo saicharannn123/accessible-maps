@@ -1,8 +1,9 @@
 import { MAP_STYLES } from '../config'
 import { TRAVEL_MODES, type Settings } from './types'
+import { isMarkerStyle } from './marker'
 
 const KEY = 'accessible-maps.settings'
-export const DEFAULT_SETTINGS: Settings = { profile: 'wheelchair', maxInclinePercent: 6, worldview: 'auto', mapLook: 'signature', travelMode: 'walk', units: 'auto' }
+export const DEFAULT_SETTINGS: Settings = { profile: 'wheelchair', maxInclinePercent: 6, worldview: 'auto', mapLook: 'signature', travelMode: 'walk', units: 'auto', marker: 'auto' }
 
 export function loadSettings(): Settings {
   try {
@@ -12,6 +13,7 @@ export function loadSettings(): Settings {
     if (!s.lookPicked && s.mapLook === 'clean') s.mapLook = DEFAULT_SETTINGS.mapLook
     if (!(s.travelMode in TRAVEL_MODES)) s.travelMode = DEFAULT_SETTINGS.travelMode
     if (!['auto', 'km', 'mi'].includes(s.units)) s.units = DEFAULT_SETTINGS.units
+    if (!isMarkerStyle(s.marker)) s.marker = 'auto'
     return s
   } catch {
     return DEFAULT_SETTINGS

@@ -94,4 +94,6 @@ export interface Settings {
   travelMode: TravelMode
   /** Distance units: 'auto' picks miles in the US and UK, kilometers elsewhere. */
   units: 'auto' | import('./geo').DistanceUnits
+  /** How your own position is drawn: dot, arrow, walker… */
+  marker?: import('./marker').MarkerStyle
 }
