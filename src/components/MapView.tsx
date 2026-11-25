@@ -20,6 +20,7 @@ import type { LngLat, Report, RouteResult } from '../lib/types'
 import { timeAgo } from '../lib/reports'
 import { markerHtml, ROTATES, type DrawnMarker } from '../lib/marker'
 import { bearingDeg } from '../lib/navigation'
+import { registerOwnTiles, withOwnTiles } from '../lib/ownTiles'
 
 export interface Layers {
   restrooms: boolean
@@ -140,9 +141,12 @@ export function MapView(props: Props) {
     if (!el) return
     let created: MlMap | null = null
     let cancelled = false
+    registerOwnTiles()
     loadBaseStyle(mapStyle).then((style) => {
       if (!cancelled) setup(new maplibregl.Map({
         container: el, style, center: PILOT_CITY.center, zoom: PILOT_CITY.zoom, maxZoom: 20,
+        // The data credit lives behind the small ⓘ button; tapping it shows the full line.
+        attributionControl: { compact: true, customAttribution: 'BM Locator' },
         // Smooth zooming: keep loading tiles mid-zoom (no blank patches), keep more nearby zoom
         // levels cached, fade labels in quickly, and cap the pixel ratio so big screens stay fast.
         cancelPendingTileRequestsWhileZooming: false,
@@ -162,6 +166,10 @@ export function MapView(props: Props) {
       // to the normal street map. Re-applied on every style load so switching looks keeps it.
       map.on('style.load', () => applyGlobe(map))
       map.addControl(new maplibregl.NavigationControl(), 'top-right')
+      // MapLibre opens the compact credit once at start; fold it back to the ⓘ button.
+      const foldCredit = () => map.getContainer().querySelector('.maplibregl-ctrl-attrib.maplibregl-compact-show')?.classList.remove('maplibregl-compact-show')
+      map.once('load', foldCredit)
+      map.once('idle', foldCredit)
       const scale = new maplibregl.ScaleControl({ unit: unitsRef.current === 'mi' ? 'imperial' : 'metric' })
       scaleRef.current = scale
       map.addControl(scale, 'bottom-right')
@@ -351,7 +359,7 @@ export function MapView(props: Props) {
     styleRef.current = mapStyle
     const look = mapStyle
     map.setStyle(MAP_STYLES[look].url, {
-      transformStyle: (prev, next) => carryOverAppLayers(prev, safeRestyle(look, next)),
+      transformStyle: (prev, next) => carryOverAppLayers(prev, withOwnTiles(safeRestyle(look, next))),
     })
     map.once('style.load', () => {
       ORIGINAL_TEXT.delete(map) // new style, new labels
@@ -673,18 +681,17 @@ const RESTYLES: Partial<Record<MapStyleId, (s: StyleSpecification) => StyleSpeci
 /** The style to open with: a URL, or for our own looks the restyled style JSON. */
 async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecification> {
   const url = MAP_STYLES[look].url
-  const restyle = RESTYLES[look]
-  if (!restyle) return url
+  const restyle = RESTYLES[look] ?? ((s: StyleSpecification) => s)
   try {
     const res = await fetch(url)
     if (!res.ok) throw new Error(String(res.status))
-    const style = restyle(await res.json())
+    const raw = (await res.json()) as StyleSpecification
     // Never let a restyle mistake blank the whole map: fall back to the plain style.
-    const errors = validateStyleMin(style)
-    if (errors.length) throw new Error(errors[0].message)
-    return style
+    const styled = restyle(raw)
+    const style = validateStyleMin(styled).length ? raw : styled
+    return withOwnTiles(style)
   } catch {
-    return url // still show a map if the restyle can't be prepared
+    return url // still show a map if the style can't be prepared
   }
 }
 
