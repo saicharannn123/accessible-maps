@@ -52,6 +52,10 @@ interface Props {
   myAccuracy: number | null
   /** Keep the camera centered on myLocation as it moves. */
   follow: boolean
+  /** Turn-by-turn mode: close-up camera that points the way you're heading. */
+  navigating?: boolean
+  /** Direction of the route ahead while navigating, in degrees. */
+  navBearing?: number
   /** The visitor dragged or zoomed the map themselves. */
   onUserMove: () => void
   /** Show country borders as this country officially sees them; null = as on the ground (OpenStreetMap). */
@@ -104,7 +108,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, navigating = false, navBearing = 0, fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -380,7 +384,8 @@ export function MapView(props: Props) {
       type: 'FeatureCollection',
       features: (route?.warnings ?? []).filter((w) => w.coords).map((w) => point(w.coords!)),
     })
-    if (route && route.geometry.length > 1) {
+    // While navigating the camera follows you; a reroute mustn't yank it out to the whole trip.
+    if (route && route.geometry.length > 1 && !navigatingRef.current) {
       const [w, s, e, n] = bboxOf(route.geometry, 0)
       // Work out the camera with padding, then move without it, so the padding doesn't stick
       // to the map (sticky padding shifts later zooms and can leave parts of the map unpainted).
@@ -467,6 +472,14 @@ export function MapView(props: Props) {
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map || !myLocation || !follow) return
+    if (navigating) {
+      // Close up, turned the way you're going, with you in the lower part of the screen so
+      // more of the road ahead shows above the direction banner.
+      lastFollowed.current = myLocation
+      map.easeTo({ center: myLocation, zoom: 17.5, bearing: navBearing, pitch: 45, duration: 800,
+        offset: [0, Math.round(map.getContainer().clientHeight * 0.18)] })
+      return
+    }
     const last = lastFollowed.current
     if (!last || distanceMeters(last, myLocation) > 2000) {
       lastFollowed.current = myLocation
@@ -476,7 +489,16 @@ export function MapView(props: Props) {
     if (map.isMoving() || distanceMeters(last, myLocation) < 8) return
     lastFollowed.current = myLocation
     map.easeTo({ center: myLocation, duration: 500 })
-  }, [myLocation, follow, ready])
+  }, [myLocation, follow, ready, navigating, navBearing])
+
+  // Leaving navigation: flatten the map and point it north again.
+  const navigatingRef = useRef(navigating)
+  useEffect(() => {
+    const was = navigatingRef.current
+    navigatingRef.current = navigating
+    const map = mapRef.current
+    if (was && !navigating && map) map.easeTo({ bearing: 0, pitch: 0, duration: 600 })
+  }, [navigating])
 
   useEffect(() => {
     const map = mapRef.current

@@ -13,6 +13,7 @@ import { loadSignals, SIGNAL_MIN_ZOOM, type Signal } from './lib/signals'
 import { loadFamous, FAMOUS_MIN_ZOOM, FAMOUS_MAX_ZOOM, type FamousPlace } from './lib/famous'
 import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
+import { navProgress, stepPositions } from './lib/navigation'
 import { reverseGeocode } from './lib/geocode'
 import { loadSettings, saveSettings } from './lib/settings'
 import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
@@ -402,18 +403,25 @@ export default function App() {
     return () => window.clearTimeout(t)
   }, [tripReady, tripKey])
 
+  // Turn-by-turn mode; it ends by itself when you leave the Go tab or clear the destination.
+  const [navOn, setNavOn] = useState(false)
+  const navigating = navOn && tab === 'route' && to != null
+
   const findRoute = async () => {
     if (!fromPlace || !to) return
     const key = tripKey
-    setRouting(true); setRouteState({ key, route: null, error: null })
+    // A reroute mid-trip keeps showing the old line until the new one arrives.
+    setRouting(true); setRouteState((rs) => ({ key, route: navigating && rs.key === key ? rs.route : null, error: null }))
     try {
       const points = [fromPlace.coords, ...stopPlaces.map((p) => p.coords), to.coords]
       setRouteState({ key, route: await planRoute(points, settings, loadRouteAccess, reports), error: null })
-      setSheetOpen(true)
+      if (!navigating) setSheetOpen(true)
       // Skip the moment before a dropped pin gets its street name; the named trip is saved next.
       if (to.name !== 'Dropped pin' && from?.name !== 'Dropped pin') remember({ kind: 'route', from, to, mode: settings.travelMode })
     } catch (e) {
-      setRouteState({ key, route: null, error: e instanceof Error ? e.message : 'Routing failed' })
+      // Mid-trip, a failed reroute keeps the old route rather than leaving you with nothing.
+      if (navigating) setRouteState((rs) => ({ ...rs, key, error: null }))
+      else setRouteState({ key, route: null, error: e instanceof Error ? e.message : 'Routing failed' })
     } finally {
       setRouting(false)
     }
@@ -421,6 +429,54 @@ export default function App() {
 
 
   useEffect(() => { findRouteRef.current = () => { void findRoute() } })
+
+  // Turn-by-turn navigation: follows your live location, moves to the next step as you pass each
+  // turn, reroutes when you leave the route, and reads the next step aloud.
+  const [voiceOn, setVoiceOn] = useState(true)
+  const stepAlong = useMemo(() => (route ? stepPositions(route) : []), [route])
+  const nav = navigating && route && myLocation ? navProgress(route, myLocation, stepAlong) : null
+  const say = useCallback((text: string) => {
+    try {
+      if (!voiceOn || !('speechSynthesis' in window)) return
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(text))
+    } catch { /* no voice on this device */ }
+  }, [voiceOn])
+  const startNav = () => {
+    // Navigation always runs from where you are now.
+    if (from) setFrom(null)
+    if (loc.status !== 'live') loc.start()
+    setNavOn(true); setFollow(true); setSheetOpen(false); setPick(null)
+    // Speaking once from the tap unlocks the voice on iPhone for the rest of the trip.
+    say('Starting route.')
+  }
+  const endNav = () => { setNavOn(false); setSheetOpen(true); try { window.speechSynthesis?.cancel() } catch { /* ignore */ } }
+  // Announce each new step once, and arrival.
+  const spoken = useRef('')
+  const navStep = nav && route ? route.steps[nav.nextStep] : null
+  useEffect(() => {
+    if (!nav || !navStep) return
+    const key = nav.arrived ? 'arrived' : `${tripKey}|${nav.nextStep}`
+    if (spoken.current === key) return
+    spoken.current = key
+    say(nav.arrived ? 'You have arrived.' : `In ${formatDistance(nav.toNextMeters)}, ${navStep.text}`)
+  })
+  // Off the route by more than a street's width: plan again from here, at most every 12 seconds.
+  const lastReroute = useRef(0)
+  const offRoute = nav != null && !nav.arrived && nav.offRouteMeters > 40 && (loc.accuracy ?? 0) < 60
+  useEffect(() => {
+    if (!offRoute || routing || Date.now() - lastReroute.current < 12000) return
+    lastReroute.current = Date.now()
+    findRouteRef.current()
+  }, [offRoute, routing, myLocation])
+  // Keep the screen awake while navigating, where the browser allows it.
+  useEffect(() => {
+    if (!navigating) return
+    let lock: { release: () => Promise<void> } | null = null
+    const nav2 = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }
+    nav2.wakeLock?.request('screen').then((l) => { lock = l }).catch(() => {})
+    return () => { void lock?.release().catch(() => {}) }
+  }, [navigating])
 
   // When a route comes in, bring its card into view: on phones it sits below the trip form,
   // under the fold of the bottom sheet, so it looked like no directions came back at all.
@@ -472,7 +528,7 @@ export default function App() {
   const arrival = route ? new Date(now.getTime() + route.durationSeconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null
 
   return (
-    <div className="app">
+    <div className={`app${navigating ? ' navigating' : ''}`}>
       <MapView
         access={access}
         reports={reports}
@@ -504,6 +560,8 @@ export default function App() {
         units={units}
         mapStyle={settings.mapLook}
         follow={follow && loc.status === 'live'}
+        navigating={navigating}
+        navBearing={nav?.bearing ?? 0}
         onUserMove={() => { setFollow(false); setUserPanned(true) }}
         fitTo={fitTo}
         onPlaceClick={selectPlace}
@@ -525,10 +583,40 @@ export default function App() {
         </div>}
       </div>
 
+      {navigating && (
+        <div className="nav-banner" role="status" aria-live="polite">
+          {nav?.arrived ? (
+            <><span className="nav-arrow" aria-hidden="true">⚑</span><div className="nav-text"><strong>You have arrived</strong><span>{to?.name}</span></div></>
+          ) : nav && navStep ? (
+            <><span className="nav-arrow" aria-hidden="true">{navStep.icon}</span>
+              <div className="nav-text"><span className="nav-dist">{formatDistance(nav.toNextMeters)}</span><strong>{navStep.text}</strong>
+                {route && route.steps[nav.nextStep + 1] && <span className="nav-then">Then: {route.steps[nav.nextStep + 1].text}</span>}</div></>
+          ) : (
+            <><span className="nav-arrow" aria-hidden="true">◎</span><div className="nav-text"><strong>{loc.status === 'denied' ? 'Location is blocked' : !myLocation ? 'Finding your location…' : 'Finding a route…'}</strong>
+              {loc.status === 'denied' && <span>Allow location for this site in your browser settings.</span>}</div></>
+          )}
+          {offRoute && routing && <span className="nav-reroute">Rerouting…</span>}
+        </div>
+      )}
+
+      {navigating && (
+        <div className="nav-footer">
+          <div className="nav-stats">
+            <strong>{nav ? formatDuration((route!.durationSeconds * nav.remainingMeters) / Math.max(route!.distanceMeters, 1)) : '—'}</strong>
+            <span>{nav ? `${formatDistance(nav.remainingMeters)} · arrive ${new Date(now.getTime() + (route!.durationSeconds * nav.remainingMeters * 1000) / Math.max(route!.distanceMeters, 1)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Getting ready'}</span>
+          </div>
+          {!follow && <button type="button" className="nav-btn" onClick={() => setFollow(true)}>Re-center</button>}
+          <button type="button" className="nav-btn icon" aria-pressed={voiceOn} aria-label={voiceOn ? 'Mute voice' : 'Turn voice on'}
+            onClick={() => { setVoiceOn((v) => !v); try { window.speechSynthesis?.cancel() } catch { /* ignore */ } }}>{voiceOn ? '🔊' : '🔇'}</button>
+          <button type="button" className="nav-btn end" onClick={endNav}>{nav?.arrived ? 'Done' : 'End'}</button>
+        </div>
+      )}
+
       <nav className="dock" role="tablist" aria-label="Sections">
         {(['nearby', 'route', 'report', 'settings'] as const).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => {
             setTab(t); setPick(null); setSheetOpen(true)
+            if (t !== 'route') setNavOn(false)
             // Directions start from where you are, so ask for location as soon as they're opened.
             if (t === 'route' && (loc.status === 'prompt' || loc.status === 'unavailable')) loc.start()
           }}>
@@ -776,7 +864,7 @@ export default function App() {
                   <span className="trip-dot end" aria-hidden="true" />
                   <SearchBox label="Destination" hideLabel value={to} placeholder="Choose a destination or tap the map" onFocus={() => setActiveField('to')}
                     near={fromPlace?.coords ?? searchCenter}
-                    onSelect={(p) => { setTo(p); if (p) fly(p.coords) }}
+                    onSelect={(p) => { setTo(p); if (p) fly(p.coords); else setNavOn(false) }}
                     extraOptions={[{ label: 'Pick on map', onPick: () => startPick('to') }]} />
                 </li>
               </ol>
@@ -818,6 +906,9 @@ export default function App() {
                   </div>
                   <div className="route-eta"><span>Arrive</span><strong>{arrival}</strong></div>
                 </div>
+                <button type="button" className="primary start-nav" onClick={startNav}>
+                  <span aria-hidden="true">➤</span> Start
+                </button>
                 {to && <p className="route-to"><span className="muted">To</span> <strong>{to.name}</strong>{to.detail ? <span className="muted">, {to.detail}</span> : null}</p>}
                 {mode === 'accessible' && (
                   <p className={route.stepFreeVerified ? 'ok' : 'warn'}>
