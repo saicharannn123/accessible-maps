@@ -508,3 +508,7 @@ section > .search input:focus { background-color: #fff; }
   max-width: 560px; margin: 0 auto; background: #fff; border-radius: 22px; padding: 12px 14px 14px; box-shadow: 0 14px 40px rgba(23,18,58,.35);
   animation: rise .25s var(--ease); max-height: 55vh; overflow-y: auto; }
 .marker-sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--ink); }
+
+.me-marker[data-style="car"] { width: 46px; height: 84px; }
+.me-car svg { width: 46px; height: 84px; filter: drop-shadow(0 3px 4px rgba(23,18,58,.35)); }
+.marker-preview .me-car svg { width: 24px; height: 44px; }
