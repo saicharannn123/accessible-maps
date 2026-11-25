@@ -44,10 +44,24 @@ jobs:
           java-version: 21
       - name: Download Planetiler
         run: curl -fsSL -o planetiler.jar "https://github.com/onthegomap/planetiler/releases/download/v${PLANETILER_VERSION}/planetiler.jar"
+      # Fetch the OpenStreetMap extract ourselves, with retries: Geofabrik sometimes refuses a
+      # connection for a moment, and Planetiler gives up on the first try.
+      - name: Download OpenStreetMap data for ${{ env.AREA }}
+        run: |
+          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o index.json https://download.geofabrik.de/index-v1-nogeom.json
+          url=$(jq -r --arg a "$AREA" '.features[].properties | select(.id == $a or (.id | split("/") | last) == $a) | .urls.pbf' index.json | head -1)
+          if [ -z "$url" ] || [ "$url" = null ]; then
+            echo "::error::Unknown area '$AREA'. Use a Geofabrik id such as new-jersey, us-northeast or monaco."
+            exit 1
+          fi
+          echo "Downloading $url"
+          curl -fL --retry 6 --retry-delay 10 --retry-all-errors -o area.osm.pbf "$url"
+          ls -lh area.osm.pbf
       - name: Build tiles for ${{ env.AREA }}
         run: |
           java -Xmx5g -jar planetiler.jar \
-            --area="$AREA" --download --force \
+            --osm-path=area.osm.pbf --download --force \
+            --http-retries=5 \
             --output=bm-locator.pmtiles \
             --name="BM Locator" \
             --attribution='© OpenStreetMap contributors · © OpenMapTiles' \
