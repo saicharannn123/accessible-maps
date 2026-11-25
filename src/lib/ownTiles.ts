@@ -5,15 +5,18 @@
 // the site serves them as one PMTiles file at tiles/bm-locator.pmtiles. The map's tile source is
 // swapped for the bmtiles:// protocol below: a tile that lies fully inside our coverage comes from
 // our own file; any other tile (or every tile, when the file is missing, e.g. in local dev) still
-// comes from OpenFreeMap. When our file grows to cover the whole world, OpenFreeMap is no longer
-// used at all, with no code change.
+// comes from OpenFreeMap. The whole-world file (build-world-map.yml, stored on Cloudflare R2) fills
+// in everywhere else, so once it exists OpenFreeMap is only a safety net.
 import * as maplibregl from 'maplibre-gl'
 import type { StyleSpecification, VectorSourceSpecification } from 'maplibre-gl'
 import { PMTiles } from 'pmtiles'
 
 export const OWN_TILES_FILE = 'tiles/bm-locator.pmtiles'
-/** Set VITE_MAP_DATA_URL to serve the file from our own server or bucket (e.g. the whole world). */
-const OWN_TILES_URL: string | undefined = import.meta.env.VITE_MAP_DATA_URL || undefined
+/**
+ * The whole-world file on our own storage (Cloudflare R2), set at build time from the
+ * R2_PUBLIC_URL repo variable. The home-area file above is rebuilt daily, so it is checked first.
+ */
+const WORLD_TILES_URL: string | undefined = import.meta.env.VITE_MAP_DATA_URL || undefined
 const PROTOCOL = 'bmtiles'
 /** The OpenMapTiles source id that OpenFreeMap's styles (and our restyles of them) draw from. */
 const SOURCE_ID = 'openmaptiles'
@@ -31,26 +34,40 @@ export interface Coverage {
   maxZoom: number
 }
 
-let archive: PMTiles | null = null
-let coverage: Promise<Coverage | null> | null = null
+interface OwnArchive {
+  archive: PMTiles
+  coverage: Promise<Coverage | null>
+}
+
+let archives: OwnArchive[] | null = null
 /** OpenFreeMap TileJSON URL → its tile URL template, fetched once. */
 const fallbackTemplates = new Map<string, Promise<string | null>>()
 let registered = false
 
-function ownUrl(): string {
-  return new URL(OWN_TILES_URL ?? OWN_TILES_FILE, document.baseURI).href
+/** Our tile files, freshest first: the daily home-area file, then the whole world. */
+function ownArchives(): OwnArchive[] {
+  if (!archives) {
+    const urls = [OWN_TILES_FILE, ...(WORLD_TILES_URL ? [WORLD_TILES_URL] : [])]
+    archives = urls.map((u) => {
+      const archive = new PMTiles(new URL(u, document.baseURI).href)
+      const coverage = archive.getHeader().then(
+        (h) => ({ bounds: [h.minLon, h.minLat, h.maxLon, h.maxLat], minZoom: h.minZoom, maxZoom: h.maxZoom }) as Coverage,
+        () => null,
+      )
+      return { archive, coverage }
+    })
+  }
+  return archives
 }
 
-/** What our own tile file covers, or null when the site has none (yet). */
-export function ownCoverage(): Promise<Coverage | null> {
-  if (!coverage) {
-    archive = new PMTiles(ownUrl())
-    coverage = archive.getHeader().then(
-      (h) => ({ bounds: [h.minLon, h.minLat, h.maxLon, h.maxLat], minZoom: h.minZoom, maxZoom: h.maxZoom }) as Coverage,
-      () => null,
-    )
+/** The tile from the freshest of our files that fully covers it, if any. */
+async function ownTile(z: number, x: number, y: number, signal: AbortSignal) {
+  for (const { archive, coverage } of ownArchives()) {
+    if (!tileInside(z, x, y, await coverage)) continue
+    const tile = await archive.getZxy(z, x, y, signal).catch(() => undefined)
+    if (tile?.data) return tile
   }
-  return coverage
+  return undefined
 }
 
 /** The tile's corners in degrees: [west, south, east, north]. */
@@ -89,10 +106,8 @@ export function registerOwnTiles() {
     const m = /^bmtiles:\/\/(\d+)\/(\d+)\/(\d+)(?:\?fallback=(.*))?$/.exec(params.url)
     if (!m) throw new Error(`Bad tile url ${params.url}`)
     const [z, x, y] = [Number(m[1]), Number(m[2]), Number(m[3])]
-    if (tileInside(z, x, y, await ownCoverage())) {
-      const tile = await archive!.getZxy(z, x, y, abort.signal).catch(() => undefined)
-      if (tile?.data) return { data: new Uint8Array(tile.data), cacheControl: tile.cacheControl, expires: tile.expires }
-    }
+    const tile = await ownTile(z, x, y, abort.signal)
+    if (tile?.data) return { data: new Uint8Array(tile.data), cacheControl: tile.cacheControl, expires: tile.expires }
     const template = m[4] ? await fallbackTemplate(decodeURIComponent(m[4])) : null
     if (!template) return { data: new Uint8Array() } // nothing to show here
     const res = await fetch(template.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), { signal: abort.signal })
@@ -116,7 +131,7 @@ export function withOwnTiles(style: StyleSpecification): StyleSpecification {
     tiles: [`${PROTOCOL}://{z}/{x}/{y}${fallback}`],
     minzoom: 0,
     maxzoom: 14, // OpenMapTiles tiles stop at 14; MapLibre zooms them further on its own
-    attribution: OWN_ATTRIBUTION + (fallback ? FALLBACK_ATTRIBUTION : ''),
+    attribution: OWN_ATTRIBUTION + (fallback && !WORLD_TILES_URL ? FALLBACK_ATTRIBUTION : ''),
   }
   return { ...style, sources: { ...style.sources, [SOURCE_ID]: own } }
 }
