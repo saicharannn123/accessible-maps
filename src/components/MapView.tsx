@@ -150,6 +150,9 @@ export function MapView(props: Props) {
       mapRef.current = map
       // Category pins are drawn on demand, so they survive switching the map look.
       map.on('styleimagemissing', (e) => { addCategoryIcon(map, e.id); addSignalIcon(map, e.id); addFamousIcon(map, e.id) })
+      // Zoomed out, the map is a round 3D globe floating in violet space; zooming in flattens it
+      // to the normal street map. Re-applied on every style load so switching looks keeps it.
+      map.on('style.load', () => applyGlobe(map))
       map.addControl(new maplibregl.NavigationControl(), 'top-right')
       const scale = new maplibregl.ScaleControl({ unit: unitsRef.current === 'mi' ? 'imperial' : 'metric' })
       scaleRef.current = scale
@@ -616,6 +619,24 @@ async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecificat
     return style
   } catch {
     return url // still show a map if the restyle can't be prepared
+  }
+}
+
+function applyGlobe(map: MlMap) {
+  try {
+    map.setProjection({ type: 'globe' })
+    map.setSky({
+      'sky-color': '#2a1f6b',
+      'horizon-color': '#8f7dff',
+      'fog-color': '#c9bfff',
+      'sky-horizon-blend': 0.6,
+      'horizon-fog-blend': 0.6,
+      'fog-ground-blend': 0.9,
+      // A soft violet glow around the globe that fades away as you zoom in.
+      'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0],
+    })
+  } catch {
+    // Older GPUs/browsers: stay on the flat map rather than failing.
   }
 }
 
