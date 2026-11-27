@@ -159,7 +159,7 @@ export function osrmSteps(legs: { steps?: OsrmStep[] }[]): RouteStep[] {
       else if (type === 'end of road') text = `At the end of the road, turn ${dir?.includes('left') ? 'left' : 'right'}${onto}`
       else text = `${dir?.startsWith('slight') ? 'Bear' : 'Turn'} ${dir?.replace(/^(slight|sharp) /, '')}${onto}`
       const icon = type === 'depart' ? '●' : type === 'arrive' ? '⚑' : type.includes('roundabout') || type.includes('rotary') ? '⟳' : ARROWS[modifier ?? 'straight'] ?? '↑'
-      out.push({ text, distanceMeters: s.distance, coords: location, icon })
+      out.push({ text, distanceMeters: s.distance, coords: location, icon, ...(road ? { road } : {}) })
     }
   })
   return out
@@ -167,7 +167,7 @@ export function osrmSteps(legs: { steps?: OsrmStep[] }[]): RouteStep[] {
 
 /** OpenRouteService segments carry ready-made instructions; we only add places and arrows. */
 export function orsSteps(
-  segments: { steps?: { instruction: string; distance: number; type: number; way_points: [number, number] }[] }[],
+  segments: { steps?: { instruction: string; distance: number; type: number; way_points: [number, number]; name?: string }[] }[],
   line: LngLat[],
 ): RouteStep[] {
   // ORS step types: 0 left, 1 right, 2 sharp left, 3 sharp right, 4 slight left, 5 slight right,
@@ -178,6 +178,7 @@ export function orsSteps(
     distanceMeters: s.distance,
     coords: line[s.way_points[0]] ?? line[0],
     icon: icons[s.type] ?? '↑',
+    ...(s.name && s.name !== '-' ? { road: s.name } : {}),
   })))
 }
 

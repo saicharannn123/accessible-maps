@@ -86,6 +86,8 @@ export interface RouteStep {
   coords: LngLat
   /** A small arrow for the kind of turn. */
   icon: string
+  /** Name of the road this step drives along, when the router gives one (matches road reports). */
+  road?: string
 }
 
 export interface RouteResult {
@@ -112,4 +114,8 @@ export interface Settings {
   units: 'auto' | import('./geo').DistanceUnits
   /** How your own position is drawn: dot, arrow, walker… */
   marker?: import('./marker').MarkerStyle
+  /** Read road reports ahead aloud while navigating (default on). */
+  roadAlertVoice?: boolean
+  /** Which road report types to read aloud (default all). */
+  roadAlertTypes?: import('./roadReports').RoadReportType[]
 }
