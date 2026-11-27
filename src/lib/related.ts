@@ -124,14 +124,14 @@ const KIND_ROOTS: Record<string, AnchorKind> = {
 /** Group for a related Wikidata item, from the English name of its class. */
 export function groupFromText(text: string): RelatedGroup {
   const t = text.toLowerCase()
-  if (/mountain|peak|summit|volcano|massif|ridge|\bhill\b|range|col\b|pass\b/.test(t)) return 'mountain'
+  if (/mountain|peak|summit|volcano|massif|\bridge\b|\bhill\b|\brange\b|\bcol\b|\bpass\b/.test(t)) return 'mountain'
   if (/park|reserve|protected|sanctuary|biosphere|forest|wilderness|heritage site/.test(t)) return 'park'
   if (/trail|path|route|trek/.test(t)) return 'trail'
   if (/glacier|lake|river|waterfall|spring|stream|reservoir|sea\b|bay\b/.test(t)) return 'water'
   if (/museum|gallery/.test(t)) return 'museum'
   if (/station|airport|metro/.test(t)) return 'transit'
   if (/viewpoint|observation/.test(t)) return 'viewpoint'
-  if (/camp|hut|refuge|lodge/.test(t)) return 'camp'
+  if (/\bcamp|\bhut\b|refuge|bivouac|mountain lodge/.test(t)) return 'camp'
   if (/visitor|information|ranger/.test(t)) return 'visitor'
   return 'landmark'
 }
@@ -223,6 +223,8 @@ export function typesQuery(ids: string[]): string {
 
 // Classes that are never a place you'd visit (administrative areas, people's settlements around a peak…).
 const SKIP_TYPES = /^(human settlement|village|census town|tehsil|district|administrative|community development block|gram panchayat|human|city|town|county|state|country)/i
+/** Things Wikidata places in a city that aren't spots to visit: events, groups, voting areas. */
+const NOT_A_SPOT = /attack|bombing|shooting|massacre|battle|\bwar\b|siege|riot|protest|uprising|election|electoral|tournament|championship|competition|festival|\bevent\b|edition|season|marathon|award|organi[sz]ation|company|business|enterprise|lodge|\bclub\b|team|association|political party|diocese|parish|region of|province|department of|arrondissement|municipality|commune/i
 
 /** Wikidata rows to direct spots, keeping the strongest link for each item. Exported for tests. */
 export function parseLinks(rows: Row[], from: LngLat, anchor: AnchorKind): RelatedSpot[] {
@@ -235,6 +237,8 @@ export function parseLinks(rows: Row[], from: LngLat, anchor: AnchorKind): Relat
     if (!coords || !id || !r.name || !link) continue
     const type = r.type?.value ?? ''
     if (rel === 'inCity' && SKIP_TYPES.test(type)) continue
+    // Around a city, "part of" and "in this city" also bring events, clubs and voting districts.
+    if (anchor === 'city' && (NOT_A_SPOT.test(type) || SKIP_TYPES.test(type))) continue
     const distance = distanceMeters(from, coords)
     // Peaks of a whole range only help when they're actually in the area.
     if (rel === 'inRange' && distance > 60_000) continue
