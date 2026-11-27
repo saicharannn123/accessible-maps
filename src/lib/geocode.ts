@@ -132,11 +132,16 @@ async function searchFresh(q: string, center: LngLat, signal: AbortSignal | unde
   }
   const close = near1.filter((p) => dist(p) <= NEAR_LIMIT_M * 1.5)
   const nearbyAnywhere = take(anywhere.filter((p) => dist(p) <= NEAR_LIMIT_M))
+  // A name that only exists far away ("Yosemite National Park" typed in India) goes first, so
+  // loose nearby matches ("Nanda Devi National Park") don't hide it. Not for kinds like "coffee".
+  const namedNear = [...close, ...nearbyAnywhere].some(named)
+  const farNamed = kind || namedNear ? []
+    : take(anywhere.filter((p) => named(p) && dist(p) > NEAR_LIMIT_M)).slice(0, 3).map((p) => ({ ...p, far: true }))
   // Far-away name matches ("Badminton, England") only when little is nearby, and labeled.
   const far = close.length + nearbyAnywhere.length >= MIN_LOCAL ? []
     : take(anywhere.filter((p) => dist(p) > NEAR_LIMIT_M)).map((p) => ({ ...p, far: true }))
 
-  const places = [...close, ...nearbyAnywhere.sort(byDistance)].slice(0, 12).concat(far.slice(0, 4))
+  const places = [...farNamed, ...close, ...nearbyAnywhere.sort(byDistance)].slice(0, 12).concat(far.slice(0, 4))
   return { kind: kind ? { label: kind.label, icon: kind.icon, tagged: !!(kind.sport || kind.cuisine) } : null, places, offline }
 }
 

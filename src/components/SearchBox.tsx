@@ -156,7 +156,7 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
           )}
           {places.map((r, i) => (
             <li key={`${r.name}-${r.coords.join()}`}>
-              {i === 0 && !r.far && <div className="search-group">{found?.kind ? `${found.kind.icon} ${found.kind.label} near you` : 'Near you'}</div>}
+              {!r.far && (i === 0 || places[i - 1]?.far) && <div className="search-group">{found?.kind ? `${found.kind.icon} ${found.kind.label} near you` : 'Near you'}</div>}
               {r.far && !places[i - 1]?.far && <div className="search-group">Farther away</div>}
               <button
                 type="button"
