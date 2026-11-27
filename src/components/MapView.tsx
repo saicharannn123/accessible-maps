@@ -21,6 +21,7 @@ import { timeAgo } from '../lib/reports'
 import { markerHtml, ROTATES, type DrawnMarker } from '../lib/marker'
 import { bearingDeg } from '../lib/navigation'
 import { registerOwnTiles, withOwnTiles } from '../lib/ownTiles'
+import { attachGlobeSpin } from '../lib/globeSpin'
 
 export interface Layers {
   restrooms: boolean
@@ -184,7 +185,8 @@ export function MapView(props: Props) {
         pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
       }))
     })
-    return () => { cancelled = true; created?.remove(); mapRef.current = null }
+    let detachSpin: (() => void) | null = null
+    return () => { cancelled = true; detachSpin?.(); created?.remove(); mapRef.current = null }
 
     function setup(map: MlMap) {
       created = map
@@ -352,6 +354,13 @@ export function MapView(props: Props) {
       map.on('moveend', emitView)
       // Only real drags/zooms by the visitor carry an originalEvent; our own camera moves don't.
       map.on('dragstart', (e) => { if (e.originalEvent) userMoveRef.current() })
+      // Zooming or turning the map yourself also means you're exploring: live location stops
+      // pulling the map back until you tap the locate button.
+      for (const ev of ['zoomstart', 'rotatestart', 'pitchstart'] as const) {
+        map.on(ev, (e) => { if (e.originalEvent && !navigatingRef.current) userMoveRef.current() })
+      }
+      // Zoomed out, grab the globe and spin it any way you like, over the poles too.
+      map.once('load', () => { detachSpin = attachGlobeSpin(map, () => userMoveRef.current()) })
     }
     // The map is created once; style and borders are changed in place by the effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
