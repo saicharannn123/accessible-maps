@@ -519,3 +519,8 @@ section > .search input:focus { background-color: #fff; }
 .me-marker[data-style="car"] { width: 46px; height: 84px; }
 .me-car svg { width: 46px; height: 84px; filter: drop-shadow(0 3px 4px rgba(23,18,58,.35)); }
 .marker-preview .me-car svg { width: 24px; height: 44px; }
+
+/* Zoomed-out globe: one finger spins it (the page must not scroll), two fingers pinch-zoom. */
+.maplibregl-canvas-container.spin-globe,
+.maplibregl-canvas-container.spin-globe .maplibregl-canvas { touch-action: none !important; }
+.maplibregl-canvas-container.spin-globe.spinning { cursor: grabbing; }
