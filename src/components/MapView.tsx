@@ -22,6 +22,7 @@ import { markerHtml, ROTATES, type DrawnMarker } from '../lib/marker'
 import { bearingDeg } from '../lib/navigation'
 import { registerOwnTiles, withOwnTiles } from '../lib/ownTiles'
 import { attachGlobeSpin } from '../lib/globeSpin'
+import { OCEAN_LAYER, nearestSouthernOcean, oceanFilter, withWorldLabels } from '../lib/worldLabels'
 
 export interface Layers {
   restrooms: boolean
@@ -352,6 +353,14 @@ export function MapView(props: Props) {
       map.on('movestart', () => { window.clearTimeout(pressTimer); pressStart = null })
 
       map.on('moveend', emitView)
+      // One Southern Ocean name, on the side of Antarctica you're looking at.
+      const placeOceans = () => {
+        if (!map.getLayer(OCEAN_LAYER)) return
+        const c = map.getCenter()
+        map.setFilter(OCEAN_LAYER, oceanFilter(nearestSouthernOcean(c.lng, c.lat)))
+      }
+      map.on('moveend', placeOceans)
+      map.on('style.load', placeOceans)
       // Only real drags/zooms by the visitor carry an originalEvent; our own camera moves don't.
       map.on('dragstart', (e) => { if (e.originalEvent) userMoveRef.current() })
       // Zooming or turning the map yourself also means you're exploring: live location stops
@@ -397,7 +406,7 @@ export function MapView(props: Props) {
     styleRef.current = mapStyle
     const look = mapStyle
     map.setStyle(MAP_STYLES[look].url, {
-      transformStyle: (prev, next) => carryOverAppLayers(prev, withOwnTiles(safeRestyle(look, next))),
+      transformStyle: (prev, next) => carryOverAppLayers(prev, withOwnTiles(withWorldLabels(safeRestyle(look, next)))),
     })
     map.once('style.load', () => {
       ORIGINAL_TEXT.delete(map) // new style, new labels
@@ -728,7 +737,7 @@ async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecificat
     // Never let a restyle mistake blank the whole map: fall back to the plain style.
     const styled = restyle(raw)
     const style = validateStyleMin(styled).length ? raw : styled
-    return withOwnTiles(style)
+    return withOwnTiles(withWorldLabels(style))
   } catch {
     return url // still show a map if the style can't be prepared
   }
