@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { LocationFix } from './speed'
 import type { LngLat } from './types'
 
 /**
@@ -17,6 +18,8 @@ export interface LiveLocation {
   position: LngLat | null
   /** Accuracy radius in meters. */
   accuracy: number | null
+  /** The latest raw reading, with speed, heading and when it was taken (null until the first). */
+  fix: LocationFix | null
   /** Ask the browser for location and start following it. Call from a click. */
   start: () => void
   /** Hide our "turn on location" card without asking. */
@@ -41,7 +44,7 @@ const WATCH_OPTIONS: PositionOptions = { enableHighAccuracy: true, maximumAge: 5
 export function useLiveLocation(): LiveLocation {
   const [simulated] = useState(simulatedPosition)
   const real = useRealLocation(simulated == null)
-  if (simulated) return { status: 'live', position: simulated, accuracy: 20, start: () => {}, dismiss: () => {} }
+  if (simulated) return { status: 'live', position: simulated, accuracy: 20, fix: null, start: () => {}, dismiss: () => {} }
   return real
 }
 
@@ -50,6 +53,7 @@ function useRealLocation(enabled: boolean): LiveLocation {
   const [status, setStatus] = useState<LocationStatus>(supported ? 'checking' : 'unsupported')
   const [position, setPosition] = useState<LngLat | null>(null)
   const [accuracy, setAccuracy] = useState<number | null>(null)
+  const [fix, setFix] = useState<LocationFix | null>(null)
   const watchId = useRef<number | null>(null)
 
   const start = useCallback(() => {
@@ -60,6 +64,10 @@ function useRealLocation(enabled: boolean): LiveLocation {
       (pos) => {
         setPosition([pos.coords.longitude, pos.coords.latitude])
         setAccuracy(pos.coords.accuracy)
+        const c = pos.coords
+        // A reading stamped in the future (clock skew) counts from when it arrived.
+        setFix({ lng: c.longitude, lat: c.latitude, accuracy: c.accuracy, speed: c.speed ?? null, heading: c.heading ?? null,
+          at: Math.min(pos.timestamp || Date.now(), Date.now()) })
         setStatus('live')
       },
       (err) => {
@@ -110,7 +118,7 @@ function useRealLocation(enabled: boolean): LiveLocation {
     }
   }, [supported, enabled, start])
 
-  return { status, position, accuracy, start, dismiss }
+  return { status, position, accuracy, fix, start, dismiss }
 }
 
 /** Plain-language steps to turn location back on, for the visitor's browser and device. */

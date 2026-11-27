@@ -19,6 +19,7 @@ import { loadFamous, FAMOUS_MIN_ZOOM, FAMOUS_MAX_ZOOM, type FamousPlace } from '
 import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
 import { navProgress, stepPositions } from './lib/navigation'
+import Speedometer from './components/Speedometer'
 import { useSheetDrag, type SheetSnap } from './lib/useSheetDrag'
 import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
 import { reverseGeocode } from './lib/geocode'
@@ -754,6 +755,7 @@ export default function App() {
         </div>
       )}
 
+      {navigating && settings.travelMode === 'car' && <Speedometer fix={loc.fix} status={loc.status} units={units} />}
       {navigating && (
         <div className="nav-footer">
           <div className="nav-stats">
