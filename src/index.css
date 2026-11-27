@@ -525,6 +525,88 @@ section > .search input:focus { background-color: #fff; }
 .maplibregl-canvas-container.spin-globe .maplibregl-canvas { touch-action: none !important; }
 .maplibregl-canvas-container.spin-globe.spinning { cursor: grabbing; }
 
+/* ---- My Maps ---- */
+.save-to-map { position: relative; display: inline-flex; }
+.save-btn { gap: 6px; min-height: 48px; cursor: pointer; }
+.save-btn.saved { background: var(--brand-soft); border-color: transparent; color: var(--brand-dark); }
+.save-btn .save-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.save-to-map.compact .save-btn { min-height: 36px; min-width: 36px; padding: 0 8px; border-radius: 10px; font-size: 1.05rem; }
+.save-menu { position: absolute; z-index: 20; right: 0; top: calc(100% + 6px); width: 250px; background: #fff; border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: var(--shadow-2); padding: 6px; display: flex; flex-direction: column; }
+.save-menu-head { font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-2); padding: 6px 8px; }
+.save-menu > button { display: flex; align-items: center; gap: 8px; border: 0; background: none; text-align: left; padding: 10px 8px; border-radius: 10px; min-height: 44px; color: inherit; }
+.save-menu > button:hover { background: var(--brand-soft); }
+.save-check { width: 22px; height: 22px; flex: none; border-radius: 6px; border: 1.5px solid #c9c2ee; display: grid; place-items: center; font-weight: 800; font-size: .8rem; color: #fff; }
+.save-menu > button.on .save-check { background: var(--brand); border-color: var(--brand); }
+.save-map-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.save-new { color: var(--brand); font-weight: 700; }
+.save-new-form { display: flex; gap: 6px; padding: 6px; }
+.save-new-form input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.save-new-form .primary { min-height: 40px; padding: 0 12px; border-radius: 10px; }
+.save-device { margin: 2px 8px 6px !important; }
+.place-card .actions .save-to-map .save-btn { height: 100%; }
+
+.my-maps { display: flex; flex-direction: column; gap: 12px; }
+.mm-device { display: flex; gap: 10px; margin: 0; padding: 10px 12px; border-radius: 14px; background: #fff7e6; color: #6b4a00; font-size: .84rem; line-height: 1.4; }
+.mm-new { display: flex; gap: 8px; }
+.mm-new input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 14px; padding: 10px 12px; background: var(--surface); }
+.mm-new .primary { padding: 0 14px; white-space: nowrap; }
+.mm-empty { text-align: center; padding: 18px 8px; border: 1.5px dashed #ddd8f0; border-radius: 16px; }
+.mm-empty > span { font-size: 2rem; }
+.mm-empty p { margin: 4px 0; }
+.mm-list, .mm-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mm-open { width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 12px; color: inherit; }
+.mm-open:hover { box-shadow: var(--shadow-2); border-color: transparent; }
+.mm-open .res-text, .mm-item .res-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mm-open .res-text span, .mm-item .res-text span { font-size: .82rem; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-swatches { flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--brand-soft); display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 7px; }
+.mm-swatches i { border-radius: 50%; }
+.mm-badge { flex: none; font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--brand-dark); background: var(--brand-soft); border-radius: 999px; padding: 3px 8px; }
+.mm-title { position: relative; display: block; }
+.mm-title input { width: 100%; font-size: 1.3rem; font-weight: 800; color: var(--ink); border: 1.5px solid transparent; border-radius: 12px; padding: 4px 30px 4px 6px; margin-left: -6px; background: transparent; }
+.mm-title input:hover, .mm-title input:focus { border-color: var(--line); background: var(--surface); outline: none; }
+.mm-edit { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--text-2); pointer-events: none; }
+.my-maps > .muted.small, .my-maps .mm-hint { margin: -6px 0 0; }
+.my-maps .back { align-self: flex-start; }
+.primary.armed { background: #db2777; box-shadow: 0 4px 12px rgba(219,39,119,.35); }
+.mm-items > li { border: 1px solid var(--line); border-radius: 16px; background: #fff; overflow: hidden; border-left: 5px solid var(--pin); }
+.mm-items > li.open { box-shadow: var(--shadow-2); border-color: var(--pin); border-left-width: 5px; }
+.mm-item { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; border: 0; background: none; padding: 10px 12px; color: inherit; }
+.mm-dot { flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--pin); color: #fff; display: grid; place-items: center; font-size: .95rem; }
+.mm-note-peek { font-style: italic; }
+.mm-edit-box { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.mm-edit-box .field { margin: 0; }
+.mm-edit-box textarea { width: 100%; border: 1.5px solid var(--line); border-radius: 12px; padding: 8px 10px; font: inherit; background: var(--surface); resize: vertical; }
+.mm-edit-box textarea:focus { outline: none; border-color: var(--brand); background: #fff; }
+.mm-edit-box p { margin: 0; }
+.mm-colors { display: flex; flex-wrap: wrap; gap: 8px; }
+.mm-colors button { width: 32px; height: 32px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1px #d6d0f5; }
+.mm-colors button.on { box-shadow: 0 0 0 2.5px var(--ink); }
+.secondary.danger, .link.danger { color: #b91c1c; }
+.mm-danger { padding-top: 6px; border-top: 1px dashed #ddd8f0; font-size: .9rem; }
+.mm-danger p { margin: 0; }
+.mm-backup { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .9rem; padding-top: 8px; border-top: 1px dashed #ddd8f0; }
+.mm-backup label.link { cursor: pointer; }
+.mm-backup p { flex-basis: 100%; margin: 0; }
+
+/* Pins from My Maps on the map. */
+.my-pin { width: 28px; height: 38px; cursor: pointer; filter: drop-shadow(0 2px 2px rgba(0,0,0,.35)); }
+.my-pin svg { display: block; }
+.my-pin.drag { cursor: grab; }
+.my-pin-icon { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); width: 19px; height: 19px; border-radius: 50%; background: #fff; display: grid; place-items: center; font-size: 11px; line-height: 1; }
+.my-pin-label { pointer-events: none; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 1px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: rgba(255,255,255,.94); color: var(--ink); font: 700 11px/1.2 system-ui, sans-serif; padding: 2px 6px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.my-pin.focus { transform-origin: bottom center; }
+.my-pin.focus svg { transform: scale(1.3); transform-origin: bottom center; }
+.my-pin.focus .my-pin-label { background: var(--ink); color: #fff; }
+.my-pin.focus::after { content: ''; position: absolute; left: 50%; bottom: -4px; width: 26px; height: 10px; transform: translateX(-50%); border-radius: 50%; background: color-mix(in srgb, var(--brand) 40%, transparent); z-index: -1; animation: my-pin-pulse 1.4s ease-out infinite; }
+@keyframes my-pin-pulse { from { opacity: .9; } to { opacity: 0; transform: translateX(-50%) scale(2.2); } }
+@media (prefers-reduced-motion: reduce) { .my-pin.focus::after { animation: none; } }
+@media (max-width: 720px) {
+  .dock-label { font-size: .7rem; white-space: nowrap; }
+  .save-menu { position: fixed; left: 12px; right: 12px; top: auto; bottom: calc(var(--dock-h) + 24px); width: auto; }
+}
+
 /* ---- Selected place and its related spots ---- */
 .trip-pin.selected-pin { width: 38px; height: 51px; position: relative; z-index: 3; }
 .selected-pin .pin-pulse { position: absolute; left: 50%; bottom: -9px; width: 22px; height: 22px; margin-left: -11px; border-radius: 50%;
