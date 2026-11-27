@@ -145,8 +145,11 @@ export function matchKind(query: string): PlaceKind | null {
 
 interface PhotonFeature {
   geometry: { coordinates: LngLat }
-  properties: { name?: string; street?: string; housenumber?: string; city?: string; district?: string; state?: string; osm_value?: string }
+  properties: { name?: string; street?: string; housenumber?: string; city?: string; district?: string; state?: string; osm_value?: string
+    osm_type?: 'N' | 'W' | 'R'; osm_id?: number; osm_key?: string }
 }
+
+const OSM_TYPE = { N: 'node', W: 'way', R: 'relation' } as const
 
 function placeFrom(f: PhotonFeature, from: LngLat | undefined, icon?: string): Place {
   const p = f.properties
@@ -154,7 +157,11 @@ function placeFrom(f: PhotonFeature, from: LngLat | undefined, icon?: string): P
   const name = p.name || street || 'Unnamed place'
   const where = [p.name ? street : '', p.district, p.city, p.state].filter(Boolean).join(', ')
   const away = from ? formatDistance(distanceMeters(from, f.geometry.coordinates)) : ''
-  return { name, detail: [away, where].filter(Boolean).join(' · '), coords: f.geometry.coordinates, icon }
+  const place: Place = { name, detail: [away, where].filter(Boolean).join(' · '), coords: f.geometry.coordinates, icon }
+  // Keep which OpenStreetMap object this is, so a selected place can find what's related to it.
+  if (p.osm_type && p.osm_id) place.osm = `${OSM_TYPE[p.osm_type]}/${p.osm_id}`
+  if (p.osm_key && p.osm_value) place.osmTag = `${p.osm_key}=${p.osm_value}`
+  return place
 }
 
 /** The nearest places of a kind (e.g. hardware stores), nearest first. */
