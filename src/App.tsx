@@ -23,6 +23,7 @@ import { useSheetDrag, type SheetSnap } from './lib/useSheetDrag'
 import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
 import { reverseGeocode } from './lib/geocode'
 import { loadSettings, saveSettings } from './lib/settings'
+import { safeWebUrl, telHref } from './lib/safeUrl'
 import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
 import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, Settings, TravelMode } from './lib/types'
 
@@ -844,14 +845,14 @@ export default function App() {
             {searchPin && (
               <div className="place-card pin-card selected-card">
                 <button type="button" className="pin-close" aria-label="Clear the selected place" onClick={() => setSearchPin(null)}>✕</button>
-                {searchPin.photo && <img className="pin-photo" src={searchPin.photo} alt="" loading="lazy"
+                {safeWebUrl(searchPin.photo) && <img className="pin-photo" src={safeWebUrl(searchPin.photo)} alt="" loading="lazy"
                   onError={(e) => { e.currentTarget.style.display = 'none' }} />}
                 <span className="selected-kicker">Selected place</span>
                 <h2>{searchPin.icon ?? '📍'} {searchPin.name}</h2>
                 {searchPin.detail && <p className="muted">{searchPin.detail}</p>}
                 {searchPin.about && <p className="pin-about">{searchPin.about[0].toUpperCase() + searchPin.about.slice(1)}</p>}
                 <p className="muted small">{searchPin.coords[1].toFixed(4)}, {searchPin.coords[0].toFixed(4)}
-                  {searchPin.wiki && <> · <a href={searchPin.wiki} target="_blank" rel="noreferrer">Read more on Wikipedia</a></>}</p>
+                  {safeWebUrl(searchPin.wiki) && <> · <a href={safeWebUrl(searchPin.wiki)} target="_blank" rel="noreferrer">Read more on Wikipedia</a></>}</p>
                 {(() => {
                   const wc = related.status === 'done' && related.result ? related.result.wheelchair : 'unknown'
                   return <p className={`wc wc-${wc}`}>{wc === 'unknown' ? '♿ ' : ''}{WHEELCHAIR_LINE[wc]}</p>
@@ -929,8 +930,8 @@ export default function App() {
                 <p className={`wc wc-${selected.wheelchair}`}>{WHEELCHAIR_TEXT[selected.wheelchair]}</p>
                 <div className="actions">
                   <button type="button" className="primary" onClick={() => directionsTo(selected)}>Directions</button>
-                  {selected.phone && <a className="secondary" href={`tel:${selected.phone.replace(/[^+\d]/g, '')}`}>Call</a>}
-                  {selected.website && <a className="secondary" href={selected.website} target="_blank" rel="noreferrer">Website</a>}
+                  {selected.phone && telHref(selected.phone) && <a className="secondary" href={telHref(selected.phone)}>Call</a>}
+                  {safeWebUrl(selected.website) && <a className="secondary" href={safeWebUrl(selected.website)} target="_blank" rel="noreferrer">Website</a>}
                   <SaveToMap place={{ name: selected.name, coords: selected.coords, kind: selected.kind, icon: CATEGORY_BY_ID[selected.category]?.icon, source: 'search', osmId: selected.id }} />
                 </div>
                 <button type="button" className="link small" onClick={() => selectAnchor({ name: selected.name, detail: selected.kind, coords: selected.coords, icon: CATEGORY_BY_ID[selected.category]?.icon, osm: selected.id })}>
