@@ -226,8 +226,10 @@ export function MapView(props: Props) {
     function setup(map: MlMap) {
       created = map
       mapRef.current = map
-      // Category pins are drawn on demand, so they survive switching the map look.
-      map.on('styleimagemissing', (e) => { addCategoryIcon(map, e.id); addSignalIcon(map, e.id); addFamousIcon(map, e.id); addRelatedIcon(map, e.id) })
+      // Pin icons are drawn on demand, so they survive switching the map look. MapLibre 6 only
+      // uses an icon added by this resolver for the current draw; one added from the
+      // 'styleimagemissing' event shows up only after the pins are laid out again.
+      map.setMissingStyleImageResolver((id) => { addCategoryIcon(map, id); addSignalIcon(map, id); addFamousIcon(map, id); addRelatedIcon(map, id) })
       // Zoomed out, the map is a round 3D globe floating in violet space; zooming in flattens it
       // to the normal street map. Re-applied on every style load so switching looks keeps it.
       map.on('style.load', () => applyGlobe(map))
