@@ -37,7 +37,8 @@ describe('what kind of place', () => {
 
 describe('queries', () => {
   it('asks Wikidata for city landmarks only for cities', () => {
-    expect(linksQuery('Q90', true)).toContain('wdt:P131 wd:Q90')
+    expect(linksQuery('Q90', true)).toContain('?r wdt:P131+ wd:Q90')
+    expect(linksQuery('Q90', true)).toContain('wd:Q570116')
     expect(linksQuery('Q213262')).not.toContain('P131')
     expect(linksQuery('Q213262')).toContain('wd:Q213262 wdt:P3018 ?r')
   })

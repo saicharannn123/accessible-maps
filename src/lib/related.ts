@@ -188,6 +188,14 @@ export const LINKS: Record<string, { rank: number; reason: (kind: string, anchor
   inCity: { rank: 4, reason: (k) => `${cap(k || 'Landmark')} in this city` },
 }
 
+/**
+ * Kinds of things worth visiting in a city: tourist attraction, museum, monument, park, square,
+ * bridge, church, palace, tower, landmark, cemetery, garden, castle, temple, religious building.
+ * Anything else Wikidata places in a city (events, universities, companies) is left out.
+ */
+const CITY_SIGHTS = ['Q570116', 'Q33506', 'Q4989906', 'Q22698', 'Q174782', 'Q12280', 'Q16970', 'Q16560', 'Q12518', 'Q2319498',
+  'Q39614', 'Q1107656', 'Q23413', 'Q44539', 'Q24398318'].map((q) => `wd:${q}`).join(' ')
+
 /** Everything linked to item `q` in Wikidata, with a name and coordinates. Exported for tests. */
 export function linksQuery(q: string, city = false): string {
   const Q = `wd:${q}`
@@ -201,7 +209,8 @@ export function linksQuery(q: string, city = false): string {
   { BIND("inRange" AS ?rel) ?r wdt:P4552 ${Q} } UNION
   { BIND("feature" AS ?rel) ${Q} wdt:P706 ?r } UNION
   { BIND("onFeature" AS ?rel) ?r wdt:P706 ${Q} }${city ? ` UNION
-  { BIND("inCity" AS ?rel) ?r wdt:P131 ${Q} . ?r wikibase:sitelinks ?s1 . FILTER(?s1 >= 6) }` : ''}
+  { BIND("inCity" AS ?rel) ?r wdt:P131+ ${Q} . ?r wikibase:sitelinks ?s1 . FILTER(?s1 >= 10)
+    ?r wdt:P31/wdt:P279* ?root . VALUES ?root { ${CITY_SIGHTS} } FILTER NOT EXISTS { ?r wdt:P576 ?gone } }` : ''}
   FILTER(?r != ${Q})
   ?r wdt:P625 ?c0 .
   ?r rdfs:label ?nm . FILTER(LANG(?nm) = "en")
