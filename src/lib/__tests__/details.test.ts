@@ -36,6 +36,7 @@ describe('parseCommons', () => {
 
 describe('text helpers', () => {
   it('strips HTML', () => expect(plainText('<span>Photo by <b>Al</b></span>')).toBe('Photo by Al'))
+  it('unescapes each entity once', () => expect(plainText('A &amp;lt;b&amp;gt; &amp; C')).toBe('A &lt;b&gt; & C'))
   it('keeps one or two sentences', () => {
     const t = 'Verona Park is a park in Verona, New Jersey. It has a lake. It opened in 1920.'
     expect(shortAbout(t)).toBe('Verona Park is a park in Verona, New Jersey. It has a lake.')

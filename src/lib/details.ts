@@ -166,8 +166,9 @@ export function plainText(html: string | undefined): string {
   if (!html) return ''
   return html
     .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    // &amp; last, so "&amp;lt;" reads as the text "&lt;" instead of turning into "<".
+    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
     .trim()
 }
