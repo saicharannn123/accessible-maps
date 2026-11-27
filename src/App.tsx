@@ -5,7 +5,9 @@ import { MyMapsPanel } from './components/MyMaps'
 import { SaveToMap } from './components/SaveToMap'
 import { getMyMaps, itemTitle, savePlace, updateItem, updateMyMaps, useMyMaps, type MapItem } from './lib/myMaps'
 import { RelatedPlaces, type SaveablePlace } from './components/RelatedPlaces'
-import { anchorKey, WHEELCHAIR_LINE, kindFromOsmTag, kindFromText, loadRelated, spotPlace, type RelatedResult, type RelatedSpot } from './lib/related'
+import { PlaceDetails } from './components/PlaceDetails'
+import { loadDetails, targetFromNearby, targetFromPlace, type DetailTarget, type PlaceFacts } from './lib/details'
+import { anchorKey, kindFromOsmTag, kindFromText, loadRelated, spotPlace, type RelatedResult, type RelatedSpot } from './lib/related'
 import { APP_NAME, MAP_STYLES, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS, type MapStyleId } from './config'
 import { browserNameView, browserWorldview, WORLDVIEWS, type WorldviewCode, type WorldviewSetting } from './lib/worldview'
 import { bboxOf, browserUnits, distanceMeters, formatDistance, formatDuration, radiusChoices, setDistanceUnits, snapRadius } from './lib/geo'
@@ -27,9 +29,8 @@ import Speedometer from './components/Speedometer'
 import { useSheetDrag, type SheetSnap } from './lib/useSheetDrag'
 import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
 import { reverseGeocode } from './lib/geocode'
-import { postalCodeName } from './lib/address'
 import { loadSettings, saveSettings } from './lib/settings'
-import { safeWebUrl, telHref } from './lib/safeUrl'
+import { postalCodeName } from './lib/address'
 import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
 import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, Settings, TravelMode } from './lib/types'
 
@@ -161,6 +162,8 @@ export default function App() {
   const [sheet, setSheet] = useState<SheetSnap>('half')
   const sheetOpen = sheet !== 'peek'
   const setSheetOpen = useCallback((open: boolean) => setSheet((s) => (open ? (s === 'peek' ? 'half' : s) : 'peek')), [])
+  // A place's card opens the sheet halfway on phones, so the selected pin stays visible above it.
+  const showCard = useCallback(() => setSheet((s) => (window.innerWidth <= 720 ? 'half' : s === 'peek' ? 'half' : s)), [])
   const panelRef = useRef<HTMLElement>(null)
   useSheetDrag(panelRef, panelScroll, sheet, setSheet)
   const viewCtrl = useRef<AbortController | null>(null)
@@ -240,6 +243,8 @@ export default function App() {
   }
 
   // --- The selected place and what's related to it -------------------------------------------
+  // A related spot picked in the list or on the map: its details card shows above the list.
+  const [activeSpotId, setActiveSpot] = useState<string | null>(null)
   const nearbyNow = useRef(nearby)
   useEffect(() => { nearbyNow.current = nearby })
   /** Select a place: highlight and center its pin, show its card and related spots, and make it the center for categories. */
@@ -250,20 +255,18 @@ export default function App() {
     if (!p.icon && kind && kind !== 'other') p = { ...p, icon: kind === 'mountain' ? '⛰️' : kind === 'park' ? '🌲' : '🏙️' }
     setSearchPin(p)
     setSelectedId(null)
+    setActiveSpot(null)
     setTab('nearby')
-    setSheetOpen(true)
+    showCard()
     setFollow(false)
     fly(p.coords, false, zoomFor(p))
     panelScroll.current?.scrollTo({ top: 0 })
     const n = nearbyNow.current
     if (n.category) searchNearby(n.category, n.radius, p.coords)
-  }, [remember, setSheetOpen, fly, searchNearby])
+  }, [remember, showCard, fly, searchNearby])
 
   // The answer for one selected place (by key); while the key doesn't match the selected place, it's loading.
   const [relatedAnswer, setRelatedAnswer] = useState<{ key: string; status: 'done' | 'error'; result: RelatedResult | null }>({ key: '', status: 'done', result: null })
-  const [activeSpotId, setActiveSpot] = useState<string | null>(null)
-  // Bumped when a pin is tapped on the map, so the list scrolls to its row.
-  const [spotScroll, setSpotScroll] = useState(0)
   const [relatedTry, setRelatedTry] = useState(0)
   useEffect(() => {
     if (!searchPin) return
@@ -295,13 +298,15 @@ export default function App() {
     setActiveSpot((cur) => (cur === s.id ? null : s.id))
     setFollow(false)
     fly(s.coords, true)
-  }, [fly])
+    showCard()
+    panelScroll.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [fly, showCard])
   const onRelatedPin = useCallback((id: string) => {
     setActiveSpot(id)
     setTab('nearby')
-    setSheetOpen(true)
-    setSpotScroll((k) => k + 1)
-  }, [setSheetOpen])
+    showCard()
+    panelScroll.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [showCard])
   /** Back to your live location: drop the selected place and search categories around you again. */
   const nearMe = () => {
     setSearchPin(null)
@@ -336,8 +341,34 @@ export default function App() {
     rememberPlace(placesRef.current.find((p) => p.id === id))
     setSelectedId(id)
     setTab('nearby')
-    setSheetOpen(true)
-  }, [rememberPlace, setSheetOpen])
+    showCard()
+  }, [rememberPlace, showCard])
+
+  // --- The details card: whichever spot is selected right now ------------------------------------
+  const activeSpotObj = useMemo(() => (activeSpot ? relatedSpots.find((x) => x.id === activeSpot) ?? null : null), [activeSpot, relatedSpots])
+  const detailTarget = useMemo<DetailTarget | null>(() => {
+    if (tab !== 'nearby') return null
+    if (selected) return targetFromNearby(selected, CATEGORY_BY_ID[selected.category]?.icon)
+    if (activeSpotObj) return { ...targetFromPlace(spotPlace(activeSpotObj)), kind: activeSpotObj.kind, wheelchair: activeSpotObj.wheelchair === 'unknown' ? undefined : activeSpotObj.wheelchair }
+    if (searchPin) return targetFromPlace(searchPin)
+    return null
+  }, [tab, selected, activeSpotObj, searchPin])
+  // Answers are kept with the key they were asked for, so a slow answer for an earlier
+  // selection can never fill in the card of a newer one.
+  const [detailAnswer, setDetailAnswer] = useState<{ key: string; facts: PlaceFacts } | null>(null)
+  const detailTargetRef = useRef(detailTarget)
+  detailTargetRef.current = detailTarget
+  const detailKey = detailTarget?.key
+  useEffect(() => {
+    const t = detailTargetRef.current
+    if (!t) return
+    const ctrl = new AbortController()
+    loadDetails(t, ctrl.signal)
+      .then((facts) => { if (!ctrl.signal.aborted) setDetailAnswer({ key: t.key, facts }) })
+      .catch(() => { /* aborted: a newer selection took over */ })
+    return () => ctrl.abort()
+  }, [detailKey])
+  const detailFacts = detailTarget && detailAnswer?.key === detailTarget.key ? detailAnswer.facts : null
 
   // Bring the place card into view when a place is picked from the list or the map.
   useEffect(() => { if (selectedId) panelScroll.current?.scrollTo({ top: 0 }) }, [selectedId])
@@ -978,34 +1009,26 @@ export default function App() {
                 // The place becomes the selected place: its pin, its related spots, and the center for categories.
                 selectAnchor(p)
               }} />
-            {searchPin && (
-              <div className="place-card pin-card selected-card">
-                <button type="button" className="pin-close" aria-label="Clear the selected place" onClick={() => setSearchPin(null)}>✕</button>
-                {safeWebUrl(searchPin.photo) && <img className="pin-photo" src={safeWebUrl(searchPin.photo)} alt="" loading="lazy"
-                  onError={(e) => { e.currentTarget.style.display = 'none' }} />}
-                <span className="selected-kicker">Selected place</span>
-                <h2>{searchPin.icon ?? '📍'} {searchPin.name}</h2>
-                {searchPin.detail && <p className="muted">{searchPin.detail}</p>}
-                <PostalLine place={searchPin} />
-                {searchPin.about && <p className="pin-about">{searchPin.about[0].toUpperCase() + searchPin.about.slice(1)}</p>}
-                <p className="muted small">{searchPin.coords[1].toFixed(4)}, {searchPin.coords[0].toFixed(4)}
-                  {safeWebUrl(searchPin.wiki) && <> · <a href={safeWebUrl(searchPin.wiki)} target="_blank" rel="noreferrer">Read more on Wikipedia</a></>}</p>
-                {(() => {
-                  const wc = related.status === 'done' && related.result ? related.result.wheelchair : 'unknown'
-                  return <p className={`wc wc-${wc}`}>{wc === 'unknown' ? '♿ ' : ''}{WHEELCHAIR_LINE[wc]}</p>
-                })()}
-                <div className="actions">
-                  <button type="button" className="primary" onClick={() => {
-                    setTo(searchPin); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route')
-                  }}>Directions</button>
-                  <button type="button" className="secondary" onClick={() => { setFollow(false); fly(searchPin.coords, false, zoomFor(searchPin)) }}>Show on map</button>
-                  {saveSlot?.({ name: searchPin.name, coords: searchPin.coords, kind: searchPin.detail, icon: searchPin.icon, source: 'search', osmId: searchPin.osm ?? (searchPin.wikidata ? `wd:${searchPin.wikidata}` : undefined) })}
-                </div>
-              </div>
+            {searchPin && detailTarget && (
+              <PlaceDetails key={detailTarget.key} target={detailTarget} facts={detailFacts} mapLook={settings.mapLook} now={now}
+                kicker={activeSpotObj ? 'Related place' : 'Selected place'}
+                back={activeSpotObj ? <button type="button" className="link back" onClick={() => { setActiveSpot(null); setFollow(false); fly(searchPin.coords, true) }}>← Back to {searchPin.name}</button> : undefined}
+                onClose={activeSpotObj ? () => setActiveSpot(null) : () => setSearchPin(null)}
+                onDirections={() => {
+                  setTo(activeSpotObj ? spotPlace(activeSpotObj) : searchPin); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route')
+                }}
+                onShowOnMap={() => { setFollow(false); fly(detailTarget.coords, false, activeSpotObj ? 16 : zoomFor(searchPin)) }}
+                save={activeSpotObj
+                  ? saveSlot({ name: activeSpotObj.name, coords: activeSpotObj.coords, kind: activeSpotObj.kind, icon: detailTarget.icon, source: 'related', osmId: activeSpotObj.osm ?? (activeSpotObj.wikidata ? `wd:${activeSpotObj.wikidata}` : undefined) })
+                  : saveSlot({ name: searchPin.name, coords: searchPin.coords, kind: detailFacts?.kind ?? searchPin.detail, icon: searchPin.icon, source: 'search', osmId: searchPin.osm ?? (searchPin.wikidata ? `wd:${searchPin.wikidata}` : undefined) })}
+                footer={<>
+                  {activeSpotObj && <button type="button" className="link small" onClick={() => selectAnchor(spotPlace(activeSpotObj))}>Explore around {activeSpotObj.name}</button>}
+                  {detailTarget.osm && <a className="small" href={`https://www.openstreetmap.org/${detailTarget.osm}`} target="_blank" rel="noreferrer">Fix or add details on OpenStreetMap</a>}
+                </>} />
             )}
             {searchPin && (
               <RelatedPlaces anchorName={searchPin.name} status={related.status} result={related.result}
-                activeId={activeSpot} scrollKey={spotScroll}
+                activeId={activeSpot} scrollKey={0}
                 onActivate={activateSpot}
                 onExplore={(sp) => selectAnchor(spotPlace(sp))}
                 onDirections={(sp) => { setTo(spotPlace(sp)); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route') }}
@@ -1051,31 +1074,19 @@ export default function App() {
             )}
             </>}
 
-            {selected && (
-              <div className="place-card detail" style={{ '--cat': CATEGORY_BY_ID[selected.category]?.color ?? '#5b3df5' } as CSSProperties}>
-                <button type="button" className="back link" onClick={() => setSelectedId(null)}>← All results</button>
-                <div className="place-hero">
-                  <span className="place-hero-icon" aria-hidden="true">{CATEGORY_BY_ID[selected.category]?.icon}</span>
-                  <div>
-                    <h2>{selected.name}</h2>
-                    <p className="muted">{selected.kind} · {formatDistance(selected.distance)} away</p>
-                  </div>
-                </div>
-                {selected.address && <p>{selected.address}</p>}
-                <OpenLine status={statusById.get(selected.id) ?? null} />
-                {selected.openingHours && <p className="muted small">Hours: {selected.openingHours}</p>}
-                <p className={`wc wc-${selected.wheelchair}`}>{WHEELCHAIR_TEXT[selected.wheelchair]}</p>
-                <div className="actions">
-                  <button type="button" className="primary" onClick={() => directionsTo(selected)}>Directions</button>
-                  {selected.phone && telHref(selected.phone) && <a className="secondary" href={telHref(selected.phone)}>Call</a>}
-                  {safeWebUrl(selected.website) && <a className="secondary" href={safeWebUrl(selected.website)} target="_blank" rel="noreferrer">Website</a>}
-                  <SaveToMap place={{ name: selected.name, coords: selected.coords, kind: selected.kind, icon: CATEGORY_BY_ID[selected.category]?.icon, source: 'search', osmId: selected.id }} />
-                </div>
-                <button type="button" className="link small" onClick={() => selectAnchor({ name: selected.name, detail: selected.kind, coords: selected.coords, icon: CATEGORY_BY_ID[selected.category]?.icon, osm: selected.id })}>
-                  See related places around {selected.name}
-                </button>
-                <a className="small" href={`https://www.openstreetmap.org/${selected.id}`} target="_blank" rel="noreferrer">Fix or add details on OpenStreetMap</a>
-              </div>
+            {selected && detailTarget && (
+              <PlaceDetails key={detailTarget.key} target={detailTarget} facts={detailFacts} mapLook={settings.mapLook} now={now}
+                kicker={`${formatDistance(selected.distance)} away`}
+                back={<button type="button" className="link back" onClick={() => setSelectedId(null)}>← All results</button>}
+                onDirections={() => directionsTo(selected)}
+                onShowOnMap={() => { setFollow(false); fly(selected.coords, false, 17) }}
+                save={<SaveToMap place={{ name: selected.name, coords: selected.coords, kind: selected.kind, icon: CATEGORY_BY_ID[selected.category]?.icon, source: 'search', osmId: selected.id }} />}
+                footer={<>
+                  <button type="button" className="link small" onClick={() => selectAnchor({ name: selected.name, detail: selected.kind, coords: selected.coords, icon: CATEGORY_BY_ID[selected.category]?.icon, osm: selected.id })}>
+                    See related places around {selected.name}
+                  </button>
+                  <a className="small" href={`https://www.openstreetmap.org/${selected.id}`} target="_blank" rel="noreferrer">Fix or add details on OpenStreetMap</a>
+                </>} />
             )}
 
             {!selected && nearby.status === 'idle' && <p className="muted">Pick a category to see what's nearby.</p>}
@@ -1098,7 +1109,7 @@ export default function App() {
                   <ul className="results">
                     {shownPlaces.map((p) => (
                       <li key={p.id}>
-                        <button type="button" onClick={() => { rememberPlace(p); setSelectedId(p.id); setFollow(false); fly(p.coords) }}>
+                        <button type="button" onClick={() => { rememberPlace(p); setSelectedId(p.id); setFollow(false); fly(p.coords); showCard() }}>
                           <span className="res-icon" style={{ '--cat': CATEGORY_BY_ID[p.category]?.color } as CSSProperties} aria-hidden="true">{CATEGORY_BY_ID[p.category]?.icon}</span>
                           <span className="res-text">
                             <strong>{p.name}</strong>

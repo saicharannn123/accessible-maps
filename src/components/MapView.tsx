@@ -881,7 +881,7 @@ function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpe
 const RESTYLES: Partial<Record<MapStyleId, (s: StyleSpecification) => StyleSpecification>> = { clean: cleanStyle, signature: signatureStyle }
 
 /** The style to open with: a URL, or for our own looks the restyled style JSON. */
-async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecification> {
+export async function loadBaseStyle(look: MapStyleId): Promise<string | StyleSpecification> {
   const url = MAP_STYLES[look].url
   const restyle = RESTYLES[look] ?? ((s: StyleSpecification) => s)
   try {
