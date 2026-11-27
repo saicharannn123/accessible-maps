@@ -21,6 +21,10 @@ import { loadFamous, FAMOUS_MIN_ZOOM, FAMOUS_MAX_ZOOM, type FamousPlace } from '
 import { addHistory, loadHistory, saveHistory, type HistoryEntry, type HistoryItem } from './lib/history'
 import { planRoute } from './lib/routing'
 import { navProgress, stepPositions } from './lib/navigation'
+import { ROAD_REPORT_IDS, ROAD_REPORT_TYPES, samplePoints } from './lib/roadReports'
+import { alertsAhead, alertText, alongTable, projectOnLine, roadAt } from './lib/roadAlerts'
+import { useMotion, useRoadReports } from './lib/useRoadReports'
+import { ReportMeta, ReportRow, RoadReportForm, VoteButtons } from './components/RoadReports'
 import Speedometer from './components/Speedometer'
 import { useSheetDrag, type SheetSnap } from './lib/useSheetDrag'
 import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
@@ -31,13 +35,13 @@ import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
 import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, Settings, TravelMode } from './lib/types'
 
 type Tab = 'nearby' | 'route' | 'maps' | 'report' | 'settings'
-type Pick = 'from' | 'to' | 'report' | 'my-pin' | `stop-${number}` | null
+type Pick = 'from' | 'to' | 'report' | 'road-report' | 'my-pin' | `stop-${number}` | null
 const MAX_STOPS = 5
 const TAB_INFO: Record<Tab, { icon: string; label: string; title: string }> = {
   nearby: { icon: '🧭', label: 'Explore', title: "What's around you" },
   route: { icon: '🚶', label: 'Go', title: 'Plan your trip' },
   maps: { icon: '🗺️', label: 'My Maps', title: 'Your own maps' },
-  report: { icon: '⚠️', label: 'Report', title: 'Flag a barrier' },
+  report: { icon: '⚠️', label: 'Report', title: 'Report what you see' },
   settings: { icon: '⚙️', label: 'Settings', title: 'Make it yours' },
 }
 
@@ -148,6 +152,12 @@ export default function App() {
   const [mapFocus, setMapFocus] = useState<string | null>(null)
   const openMap = myMaps.maps.find((m) => m.id === openMapId) ?? null
   const [draft, setDraft] = useState<{ coords: LngLat | null; type: ReportType; note: string }>({ coords: null, type: 'broken-elevator', note: '' })
+  // Community road reports: which kind of report the Report tab is on, and where a new one goes.
+  const [reportKind, setReportKind] = useState<'road' | 'barrier'>('road')
+  const [rrWhere, setRrWhere] = useState<'here' | 'map'>('here')
+  const [rrSpot, setRrSpot] = useState<LngLat | null>(null)
+  const [rrActive, setRrActive] = useState<string | null>(null)
+  const [rrSheet, setRrSheet] = useState(false)
   // Phone bottom sheet: peek (just the title), half, or full. Swipes move it between them.
   const [sheet, setSheet] = useState<SheetSnap>('half')
   const sheetOpen = sheet !== 'peek'
@@ -464,6 +474,14 @@ export default function App() {
   const onMapClick = useCallback((c: LngLat) => {
     setMapMenu(null)
     if (pick === 'my-pin') { dropMyPin(c); setPick(null); return }
+    setRrActive(null)
+    if (pick === 'road-report' || (tab === 'report' && reportKind === 'road' && !pick)) {
+      setRrSpot(c); setRrWhere('map')
+      if (pick) { setPick(null); setRrSheet(true) }
+      fly(c, true)
+      setSheetOpen(true)
+      return
+    }
     if (pick === 'from' || pick === 'to' || pick?.startsWith('stop-')) dropPin(pick as 'from' | 'to' | `stop-${number}`, c)
     else if (pick === 'report' || tab === 'report') setDraft((d) => ({ ...d, coords: c }))
     else if (tab === 'route') {
@@ -475,7 +493,7 @@ export default function App() {
     fly(c, true)
     if (pick) setSheetOpen(true)
     setPick(null)
-  }, [pick, tab, activeField, dropPin, fly, setSheetOpen, dropMyPin])
+  }, [pick, tab, activeField, dropPin, fly, setSheetOpen, dropMyPin, reportKind])
 
   // "Pick on map": on phones, tuck the panel away so the whole map is free to tap.
   const startPick = (field: Exclude<Pick, null>) => {
@@ -637,6 +655,64 @@ export default function App() {
     spoken.current = key
     say(nav.arrived ? 'You have arrived.' : `In ${formatDistance(nav.toNextMeters)}, ${navStep.text}`)
   })
+  // ---- Community road reports ----
+  // Shared reports around you, the map, and your whole route. Faster updates while navigating.
+  const motion = useMotion(loc.status === 'live' ? myLocation : null, loc.accuracy)
+  const routeSamples = useMemo(() => (route ? samplePoints(route.geometry) : []), [route])
+  const rrPoints = useMemo(() => [...(myLocation ? [myLocation] : []), mapCenter, ...routeSamples], [myLocation, mapCenter, routeSamples])
+  const rr = useRoadReports(rrPoints, navigating ? 20_000 : 45_000)
+  const rrReport = rr.reports.find((r) => r.id === rrActive) ?? null
+  const routeAlong = useMemo(() => (route ? alongTable(route.geometry) : []), [route])
+  // Alerts only for driving and cycling: road reports are about traffic.
+  const alerts = useMemo(() => (navigating && route && myLocation && (settings.travelMode === 'car' || settings.travelMode === 'bike')
+    ? alertsAhead(route, myLocation, rr.reports, { stepAlong, along: routeAlong, speedMps: motion.speedMps })
+    : []), [navigating, route, myLocation, rr.reports, stepAlong, routeAlong, motion.speedMps, settings.travelMode])
+  // Each report alerts once per trip: shown for 12 seconds and, if you want, read aloud.
+  const [alerted, setAlerted] = useState<{ trip: boolean; at: Record<string, number>; clock: number }>({ trip: false, at: {}, clock: 0 })
+  if (alerted.trip !== navigating) setAlerted({ trip: navigating, at: {}, clock: 0 }) // a new trip alerts afresh
+  const heardTypes = settings.roadAlertTypes ?? ROAD_REPORT_IDS
+  const alertVoice = settings.roadAlertVoice ?? true
+  const nextAlert = alerts.find((a) => alerted.at[a.report.id] == null) ?? null
+  useEffect(() => {
+    if (!nextAlert) return
+    const r = nextAlert.report
+    const at = Date.now()
+    setAlerted((s) => ({ ...s, at: { ...s.at, [r.id]: at }, clock: at }))
+    if (voiceOn && alertVoice && heardTypes.includes(r.type)) {
+      try {
+        // Queued after any turn instruction rather than cutting it off.
+        if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(alertText(r)))
+      } catch { /* no voice */ }
+    }
+  }, [nextAlert, voiceOn, alertVoice, heardTypes])
+  // Hide the banner 12 seconds after it appeared.
+  useEffect(() => {
+    if (!alerted.clock) return
+    const t = window.setTimeout(() => setAlerted((s) => ({ ...s, clock: s.clock + 12_001 })), 12_000)
+    return () => window.clearTimeout(t)
+  }, [alerted.clock])
+  const shownAlert = alerts.find((a) => {
+    const at = alerted.at[a.report.id]
+    return at != null && alerted.clock - at < 12_000
+  }) ?? null
+  // The alert sits just under the next-turn banner, however tall that is.
+  const navBannerRef = useRef<HTMLDivElement>(null)
+  const [navBannerBottom, setNavBannerBottom] = useState(0)
+  useEffect(() => {
+    const el = navBannerRef.current
+    if (!el || !shownAlert) return
+    const b = el.offsetTop + el.offsetHeight
+    if (b !== navBannerBottom) setNavBannerBottom(b)
+  })
+  // The road you're on and your direction, attached to a report made where you are.
+  const rrContext = () => {
+    if (navigating && route && myLocation && nav) {
+      const me = projectOnLine(myLocation, route.geometry, routeAlong)
+      return { heading: motion.heading ?? nav.bearing, road: me.away < 30 ? roadAt(route, stepAlong, me.along) : null }
+    }
+    return { heading: motion.heading, road: null }
+  }
+
   // Off the route by more than a street's width: plan again from here, at most every 12 seconds.
   const lastReroute = useRef(0)
   const offRoute = nav != null && !nav.arrived && nav.offRouteMeters > 40 && (loc.accuracy ?? 0) < 60
@@ -684,7 +760,8 @@ export default function App() {
   }
 
   const pickHint = pick === 'from' ? 'Tap the map to set your start' : pick === 'to' ? 'Tap the map to set your destination'
-    : pick?.startsWith('stop-') ? 'Tap the map to set this stop' : pick === 'my-pin' ? 'Tap the map to drop your pin' : null
+    : pick?.startsWith('stop-') ? 'Tap the map to set this stop' : pick === 'my-pin' ? 'Tap the map to drop your pin'
+    : pick === 'road-report' ? 'Tap the map where it is' : null
 
   const openHistory = (h: HistoryItem) => {
     remember({ ...h })
@@ -713,7 +790,7 @@ export default function App() {
   const arrival = route ? new Date(now.getTime() + route.durationSeconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null
 
   return (
-    <div className={`app${navigating ? ' navigating' : ''}`}>
+    <div className={`app${navigating ? ' navigating' : ''}${navigating && shownAlert ? ' rr-alerting' : ''}`}>
       <MapView
         access={access}
         reports={reports}
@@ -731,7 +808,12 @@ export default function App() {
         dimOthers={tab === 'nearby' && searchPin != null && !selected}
         markLabel={tab === 'nearby' && !selected && searchPin ? searchPin.name : null}
         onFamousClick={(f) => selectAnchor({ name: f.name, detail: f.kind, coords: f.coords, icon: f.icon, photo: f.photo, about: f.about, wiki: f.wiki, wikidata: f.id })}
-        markPin={tab === 'nearby' && !selected ? searchPin?.coords ?? null : tab === 'report' ? draft.coords : null}
+        markPin={tab === 'nearby' && !selected ? searchPin?.coords ?? null
+          : (tab === 'report' && reportKind === 'road') || rrSheet || pick === 'road-report' ? (rrWhere === 'map' ? rrSpot : null)
+          : tab === 'report' ? draft.coords : null}
+        roadReports={rr.reports}
+        activeRoadReportId={rrActive}
+        onRoadReportClick={(id) => { setRrActive(id); setMapMenu(null) }}
         pickMode={pick != null || tab === 'route' || tab === 'report'}
         places={tab === 'nearby' ? shownPlaces : selected ? [selected] : []}
         selectedPlaceId={selectedId}
@@ -771,7 +853,7 @@ export default function App() {
       </div>
 
       {navigating && (
-        <div className="nav-banner" role="status" aria-live="polite">
+        <div className="nav-banner" role="status" aria-live="polite" ref={navBannerRef}>
           {nav?.arrived ? (
             <><span className="nav-arrow" aria-hidden="true">⚑</span><div className="nav-text"><strong>You have arrived</strong><span>{to?.name}</span></div></>
           ) : nav && navStep ? (
@@ -786,6 +868,23 @@ export default function App() {
         </div>
       )}
 
+      {navigating && shownAlert && (
+        <div className="rr-alert" role="alert" style={{ '--rr': ROAD_REPORT_TYPES[shownAlert.report.type].color, ...(navBannerBottom ? { top: navBannerBottom + 8 } : {}) } as CSSProperties}>
+          <span className="rr-alert-icon" aria-hidden="true">{ROAD_REPORT_TYPES[shownAlert.report.type].icon}</span>
+          <div className="rr-alert-text">
+            <strong>{alertText(shownAlert.report)}</strong>
+            <span>In {formatDistance(shownAlert.aheadMeters)} · <ReportMeta r={shownAlert.report} /></span>
+            {!motion.moving && <VoteButtons r={shownAlert.report} api={rr} moving={motion.moving} compact />}
+          </div>
+          <button type="button" className="rr-alert-mute" aria-pressed={!alertVoice}
+            aria-label={alertVoice ? 'Mute spoken road alerts' : 'Turn spoken road alerts on'} title={alertVoice ? 'Mute spoken road alerts' : 'Turn spoken road alerts on'}
+            onClick={() => { setSettings((st) => ({ ...st, roadAlertVoice: !alertVoice })); try { window.speechSynthesis?.cancel() } catch { /* ignore */ } }}>
+            {alertVoice ? '🔊' : '🔇'}
+          </button>
+        </div>
+      )}
+      {navigating && pick === 'road-report' && <div className="rr-pick-hint" role="status">Tap the map where it is <button type="button" className="link" onClick={() => { setPick(null); setRrSheet(true) }}>Cancel</button></div>}
+
       {navigating && settings.travelMode === 'car' && <Speedometer fix={loc.fix} status={loc.status} units={units} />}
       {navigating && (
         <div className="nav-footer">
@@ -794,6 +893,8 @@ export default function App() {
             <span>{nav ? `${formatDistance(nav.remainingMeters)} · arrive ${new Date(now.getTime() + (route!.durationSeconds * nav.remainingMeters * 1000) / Math.max(route!.distanceMeters, 1)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Getting ready'}</span>
           </div>
           {!follow && <button type="button" className="nav-btn" onClick={() => setFollow(true)}>Re-center</button>}
+          <button type="button" className="nav-btn icon rr-nav-btn" aria-expanded={rrSheet} aria-label="Report something on the road" title="Report something on the road"
+            onClick={() => { setRrSheet((o) => !o); setMarkerMenu(false); setPick(null) }}>⚠️</button>
           <button type="button" className="nav-btn icon" aria-expanded={markerMenu} aria-label="Change your location marker" title="Change your location marker"
             onClick={() => setMarkerMenu((o) => !o)}>
             <span className="marker-preview small" dangerouslySetInnerHTML={{ __html: markerHtml(resolveMarker(settings.marker ?? 'auto', true, settings.travelMode)) }} />
@@ -801,6 +902,28 @@ export default function App() {
           <button type="button" className="nav-btn icon" aria-pressed={voiceOn} aria-label={voiceOn ? 'Mute voice' : 'Turn voice on'}
             onClick={() => { setVoiceOn((v) => !v); try { window.speechSynthesis?.cancel() } catch { /* ignore */ } }}>{voiceOn ? '🔊' : '🔇'}</button>
           <button type="button" className="nav-btn end" onClick={endNav}>{nav?.arrived ? 'Done' : 'End'}</button>
+        </div>
+      )}
+
+      {navigating && rrSheet && (
+        <div className="marker-sheet rr-sheet" role="dialog" aria-label="Report something on the road">
+          <div className="marker-sheet-head"><strong>Report on the road</strong>
+            <button type="button" className="icon-btn" aria-label="Close" onClick={() => setRrSheet(false)}>✕</button></div>
+          <RoadReportForm api={rr} moving={motion.moving} myLocation={myLocation} spot={rrSpot} where={rrWhere}
+            onWhere={(w) => { setRrWhere(w); if (w === 'map') { setRrSheet(false); setPick('road-report'); setFollow(false) } }}
+            {...rrContext()} onSent={() => window.setTimeout(() => setRrSheet(false), 1500)} />
+        </div>
+      )}
+
+      {rrReport && (
+        <div className={`rr-card${navigating ? ' in-nav' : ''}`} role="dialog" aria-label={`${ROAD_REPORT_TYPES[rrReport.type].label} report`}>
+          <span className="rr-icon" style={{ background: ROAD_REPORT_TYPES[rrReport.type].color }} aria-hidden="true">{ROAD_REPORT_TYPES[rrReport.type].icon}</span>
+          <div className="rr-body">
+            <strong>{ROAD_REPORT_TYPES[rrReport.type].label}{rrReport.road ? ` · ${rrReport.road}` : ''}</strong>
+            <ReportMeta r={rrReport} />
+            <VoteButtons r={rrReport} api={rr} moving={motion.moving} />
+          </div>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={() => setRrActive(null)}>✕</button>
         </div>
       )}
 
@@ -815,7 +938,8 @@ export default function App() {
       <nav className="dock" role="tablist" aria-label="Sections">
         {(['nearby', 'route', 'maps', 'report', 'settings'] as const).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => {
-            setTab(t); setPick(null); setSheetOpen(true)
+            setTab(t); setPick(null); setSheetOpen(true); setRrActive(null)
+            if (t === 'report') rr.refresh()
             if (t !== 'route') setNavOn(false)
             // Directions start from where you are, so ask for location as soon as they're opened.
             if (t === 'route' && (loc.status === 'prompt' || loc.status === 'unavailable')) loc.start()
@@ -1183,6 +1307,34 @@ export default function App() {
         )}
 
         {tab === 'report' && (
+          <div className="seg report-kind" role="tablist" aria-label="What to report">
+            <button type="button" role="tab" aria-selected={reportKind === 'road'} className={reportKind === 'road' ? 'active' : ''} onClick={() => setReportKind('road')}>🚗 On the road</button>
+            <button type="button" role="tab" aria-selected={reportKind === 'barrier'} className={reportKind === 'barrier' ? 'active' : ''} onClick={() => setReportKind('barrier')}>♿ Sidewalk barrier</button>
+          </div>
+        )}
+
+        {tab === 'report' && reportKind === 'road' && (
+          <section>
+            <p>Let other drivers know what’s on the road. Choose where, then tap what you see.</p>
+            <RoadReportForm api={rr} moving={motion.moving} myLocation={myLocation} spot={rrSpot} where={rrWhere}
+              onWhere={(w) => { setRrWhere(w); if (w === 'here' && myLocation) fly(myLocation, true); if (w === 'map') setSheetOpen(false) }} {...rrContext()} />
+            {rr.error && <p className="warn small">{rr.error}</p>}
+            <h2>Reported near you</h2>
+            {rr.reports.length === 0 ? (
+              <p className="muted small">{rr.status === 'loading' ? 'Checking for reports…' : 'No road reports around here right now.'}</p>
+            ) : (
+              <ul className="rr-list">
+                {[...rr.reports]
+                  .sort((a, b) => distanceMeters(myLocation ?? mapCenter, a.coords) - distanceMeters(myLocation ?? mapCenter, b.coords))
+                  .slice(0, 30)
+                  .map((r) => <ReportRow key={r.id} r={r} api={rr} moving={motion.moving} here={myLocation}
+                    onShow={() => { fly(r.coords); setRrActive(r.id) }} />)}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {tab === 'report' && reportKind === 'barrier' && (
           <section>
             <p>Tap the map where the problem is, choose what's wrong, and send. Reports show for {REPORT_LIFETIME_DAYS} days.</p>
             <p className={draft.coords ? 'ok' : 'muted'}>{draft.coords ? 'Location set. Tap the map again to move it.' : 'No location yet. Tap the map.'}</p>
@@ -1220,6 +1372,25 @@ export default function App() {
             <div className="field">
               <span>Your location marker</span>
               {markerChoices}
+            </div>
+            <div className="field">
+              <span>Spoken road alerts while driving</span>
+              <label className="check-row">
+                <input type="checkbox" checked={alertVoice} onChange={(e) => setSettings({ ...settings, roadAlertVoice: e.target.checked })} />
+                <span>{alertVoice ? 'On' : 'Muted'}: say road reports ahead out loud</span>
+              </label>
+              <div className="chips" role="group" aria-label="Report types to hear">
+                {ROAD_REPORT_IDS.map((t) => {
+                  const on = heardTypes.includes(t)
+                  return (
+                    <button key={t} type="button" aria-pressed={on} className={on ? 'active' : ''} disabled={!alertVoice}
+                      onClick={() => setSettings({ ...settings, roadAlertTypes: on ? heardTypes.filter((x) => x !== t) : [...heardTypes, t] })}>
+                      {on ? '✓ ' : ''}{ROAD_REPORT_TYPES[t].icon} {ROAD_REPORT_TYPES[t].label}
+                    </button>
+                  )
+                })}
+              </div>
+              <span className="muted small">Alerts still show on screen for every type. They only cover reports ahead on your route, in your direction.</span>
             </div>
             <div className="field">
               <span>Map look</span>
