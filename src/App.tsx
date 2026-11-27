@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { MapView, type Layers } from './components/MapView'
 import { SearchBox } from './components/SearchBox'
+import { MyMapsPanel } from './components/MyMaps'
+import { SaveToMap } from './components/SaveToMap'
+import { getMyMaps, itemTitle, savePlace, updateItem, updateMyMaps, useMyMaps, type MapItem } from './lib/myMaps'
 import { APP_NAME, MAP_STYLES, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS, type MapStyleId } from './config'
 import { browserNameView, browserWorldview, WORLDVIEWS, type WorldviewCode, type WorldviewSetting } from './lib/worldview'
 import { bboxOf, browserUnits, distanceMeters, formatDistance, formatDuration, radiusChoices, setDistanceUnits, snapRadius } from './lib/geo'
@@ -21,12 +24,13 @@ import { loadSettings, saveSettings } from './lib/settings'
 import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
 import type { LngLat, MobilityProfile, Place, Report, ReportType, RouteResult, Settings, TravelMode } from './lib/types'
 
-type Tab = 'nearby' | 'route' | 'report' | 'settings'
-type Pick = 'from' | 'to' | 'report' | `stop-${number}` | null
+type Tab = 'nearby' | 'route' | 'maps' | 'report' | 'settings'
+type Pick = 'from' | 'to' | 'report' | 'my-pin' | `stop-${number}` | null
 const MAX_STOPS = 5
 const TAB_INFO: Record<Tab, { icon: string; label: string; title: string }> = {
   nearby: { icon: '🧭', label: 'Explore', title: "What's around you" },
   route: { icon: '🚶', label: 'Go', title: 'Plan your trip' },
+  maps: { icon: '🗺️', label: 'My Maps', title: 'Your own maps' },
   report: { icon: '⚠️', label: 'Report', title: 'Flag a barrier' },
   settings: { icon: '⚙️', label: 'Settings', title: 'Make it yours' },
 }
@@ -117,6 +121,11 @@ export default function App() {
   const fly = useCallback((at: LngLat, keepZoom = false) => setFlyTo({ at: [...at] as LngLat, keepZoom }), [])
   // The place you picked from the search box on the Near me tab, shown as a red pin.
   const [searchPin, setSearchPin] = useState<Place | null>(null)
+  // My Maps: the open map (its pins show on the map) and the highlighted item.
+  const myMaps = useMyMaps()
+  const [openMapId, setOpenMapId] = useState<string | null>(null)
+  const [mapFocus, setMapFocus] = useState<string | null>(null)
+  const openMap = myMaps.maps.find((m) => m.id === openMapId) ?? null
   const [draft, setDraft] = useState<{ coords: LngLat | null; type: ReportType; note: string }>({ coords: null, type: 'broken-elevator', note: '' })
   // Phone bottom sheet: peek (just the title), half, or full. Swipes move it between them.
   const [sheet, setSheet] = useState<SheetSnap>('half')
@@ -271,7 +280,7 @@ export default function App() {
     viewCtrl.current?.abort()
     // Restrooms, steps and curbs only matter on foot, so skip them for driving and cycling directions.
     const onWheels = tabRef.current === 'route' && (modeRef.current === 'car' || modeRef.current === 'bike')
-    if (tabRef.current === 'nearby' || tabRef.current === 'settings' || onWheels) {
+    if (tabRef.current === 'nearby' || tabRef.current === 'maps' || tabRef.current === 'settings' || onWheels) {
       setDetailNotice(null)
       return
     }
@@ -311,8 +320,25 @@ export default function App() {
     reverseGeocode(c).then((p) => { if (p) set(p) }).catch(() => {})
   }, [])
 
+  // My Maps: a tap drops your own pin into the open map; it takes the street name when that arrives.
+  const openMapRef = useRef(openMapId)
+  useEffect(() => { openMapRef.current = openMapId })
+  const dropMyPin = useCallback((c: LngLat) => {
+    // Into the open map, else your default map (a new one if you have none).
+    const mapId = savePlace({ name: 'Dropped pin', coords: c, source: 'pin' }, openMapRef.current ?? undefined)
+    setOpenMapId(mapId)
+    const m = getMyMaps().maps.find((x) => x.id === mapId)
+    const item = m?.items.find((i) => i.source === 'pin' && i.coords[0] === c[0] && i.coords[1] === c[1])
+    if (!item) return
+    setMapFocus(item.id)
+    reverseGeocode(c).then((p) => {
+      if (p) updateMyMaps((s) => updateItem(s, mapId, item.id, { name: p.name }))
+    }).catch(() => {})
+  }, [])
+
   const onMapClick = useCallback((c: LngLat) => {
     setMapMenu(null)
+    if (pick === 'my-pin') { dropMyPin(c); setPick(null); return }
     if (pick === 'from' || pick === 'to' || pick?.startsWith('stop-')) dropPin(pick as 'from' | 'to' | `stop-${number}`, c)
     else if (pick === 'report' || tab === 'report') setDraft((d) => ({ ...d, coords: c }))
     else if (tab === 'route') {
@@ -324,7 +350,7 @@ export default function App() {
     fly(c, true)
     if (pick) setSheetOpen(true)
     setPick(null)
-  }, [pick, tab, activeField, dropPin, fly, setSheetOpen])
+  }, [pick, tab, activeField, dropPin, fly, setSheetOpen, dropMyPin])
 
   // "Pick on map": on phones, tuck the panel away so the whole map is free to tap.
   const startPick = (field: Exclude<Pick, null>) => {
@@ -533,7 +559,7 @@ export default function App() {
   }
 
   const pickHint = pick === 'from' ? 'Tap the map to set your start' : pick === 'to' ? 'Tap the map to set your destination'
-    : pick?.startsWith('stop-') ? 'Tap the map to set this stop' : null
+    : pick?.startsWith('stop-') ? 'Tap the map to set this stop' : pick === 'my-pin' ? 'Tap the map to drop your pin' : null
 
   const openHistory = (h: HistoryItem) => {
     remember({ ...h })
@@ -546,6 +572,15 @@ export default function App() {
       if (!h.from && loc.status !== 'live') loc.start()
       setTab('route')
     }
+  }
+
+  const myPins = useMemo(() => (tab === 'maps' && openMap && !navigating ? openMap.items.map((i) => ({
+    id: i.id, coords: i.coords, color: i.color, title: itemTitle(i), icon: i.icon, draggable: i.source === 'pin',
+  })) : []), [tab, openMap, navigating])
+  const directionsToItem = (i: MapItem) => {
+    setTo({ name: itemTitle(i), detail: i.kind ?? '', coords: i.coords }); setFrom(null)
+    if (loc.status !== 'live') loc.start()
+    setTab('route')
   }
 
   const routeStops = useMemo(() => stops.flatMap((st) => (st.place ? [st.place.coords] : [])), [stops])
@@ -595,11 +630,15 @@ export default function App() {
         onMapContext={onMapContext}
         onPinDrag={onPinDrag}
         onViewChange={onViewChange}
+        myPins={myPins}
+        myPinFocus={tab === 'maps' ? mapFocus : null}
+        onMyPinClick={(id) => { setMapFocus(id); setTab('maps'); setSheetOpen(true) }}
+        onMyPinDrag={(id, c) => { if (openMapId) updateMyMaps((s) => updateItem(s, openMapId, id, { coords: c })) }}
       />
 
       <div className="topbar">
         <div className="brand"><span className="brand-mark" aria-hidden="true">📍</span><span className="brand-name">{APP_NAME}</span><span className="brand-tag">step-free first</span></div>
-        {tab !== 'nearby' && <div className="layer-toggles" role="group" aria-label="Map layers">
+        {tab !== 'nearby' && tab !== 'maps' && <div className="layer-toggles" role="group" aria-label="Map layers">
           {(['restrooms', 'lighting', 'obstacles', 'reports'] as const).map((k) => (
             <button key={k} type="button" aria-pressed={layers[k]} className={layers[k] ? 'on' : ''}
               onClick={() => setLayers((l) => ({ ...l, [k]: !l[k] }))}>
@@ -651,7 +690,7 @@ export default function App() {
       )}
 
       <nav className="dock" role="tablist" aria-label="Sections">
-        {(['nearby', 'route', 'report', 'settings'] as const).map((t) => (
+        {(['nearby', 'route', 'maps', 'report', 'settings'] as const).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => {
             setTab(t); setPick(null); setSheetOpen(true)
             if (t !== 'route') setNavOn(false)
@@ -681,6 +720,10 @@ export default function App() {
           <button type="button" role="menuitem" onClick={() => fromMenu('to')}>🚩 Directions to here</button>
           <button type="button" role="menuitem" onClick={() => fromMenu('from')}>🟢 Directions from here</button>
           <button type="button" role="menuitem" disabled={stops.length >= MAX_STOPS} onClick={() => fromMenu('stop')}>➕ {to ? 'Add as a stop' : 'Add to trip'}</button>
+          <button type="button" role="menuitem" onClick={() => {
+            const id = savePlace({ name: mapMenu.name ?? 'Dropped pin', coords: mapMenu.at, source: 'pin' }, openMapId ?? undefined)
+            setMapMenu(null); setOpenMapId(id); setTab('maps'); setSheetOpen(true)
+          }}>📌 Save to My Maps</button>
           <button type="button" role="menuitem" className="muted" onClick={() => setMapMenu(null)}>Close</button>
         </div>
       )}
@@ -738,6 +781,7 @@ export default function App() {
                     setTo(searchPin); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route')
                   }}>Directions</button>
                   <button type="button" className="secondary" onClick={() => fly(searchPin.coords)}>Show on map</button>
+                  <SaveToMap place={{ name: searchPin.name, coords: searchPin.coords, kind: searchPin.detail, icon: searchPin.icon, source: 'search' }} />
                 </div>
               </div>
             )}
@@ -797,6 +841,7 @@ export default function App() {
                   <button type="button" className="primary" onClick={() => directionsTo(selected)}>Directions</button>
                   {selected.phone && <a className="secondary" href={`tel:${selected.phone.replace(/[^+\d]/g, '')}`}>Call</a>}
                   {selected.website && <a className="secondary" href={selected.website} target="_blank" rel="noreferrer">Website</a>}
+                  <SaveToMap place={{ name: selected.name, coords: selected.coords, kind: selected.kind, icon: CATEGORY_BY_ID[selected.category]?.icon, source: 'search', osmId: selected.id }} />
                 </div>
                 <a className="small" href={`https://www.openstreetmap.org/${selected.id}`} target="_blank" rel="noreferrer">Fix or add details on OpenStreetMap</a>
               </div>
@@ -1009,6 +1054,15 @@ export default function App() {
           </section>
         )}
 
+        {tab === 'maps' && (
+          <MyMapsPanel openId={openMapId} onOpen={setOpenMapId} focusId={mapFocus} onFocus={setMapFocus}
+            dropping={pick === 'my-pin'} myLocation={myLocation}
+            onDropPin={() => (pick === 'my-pin' ? setPick(null) : startPick('my-pin'))}
+            onShow={(c) => { setFollow(false); fly(c) }}
+            onFit={(pts) => { setFollow(false); setFitTo({ points: pts, key: Date.now() }) }}
+            onDirections={directionsToItem} />
+        )}
+
         {tab === 'report' && (
           <section>
             <p>Tap the map where the problem is, choose what's wrong, and send. Reports show for {REPORT_LIFETIME_DAYS} days.</p>
@@ -1098,7 +1152,7 @@ export default function App() {
           </section>
         )}
 
-        {tab === 'nearby' ? (
+        {tab === 'nearby' || tab === 'maps' ? (
           <footer className="legend"><span className="credit">Places and map data © OpenStreetMap contributors</span></footer>
         ) : (
         <footer className="legend">

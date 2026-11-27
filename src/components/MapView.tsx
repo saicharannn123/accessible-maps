@@ -81,6 +81,23 @@ interface Props {
   /** A trip pin was dragged: role is 'from', 'to' or the stop's index. */
   onPinDrag: (role: 'from' | 'to' | number, p: LngLat) => void
   onViewChange: (bbox: [number, number, number, number], zoom: number) => void
+  /** Pins from the open map in My Maps. */
+  myPins?: MyPin[]
+  /** The My Maps pin that's highlighted. */
+  myPinFocus?: string | null
+  onMyPinClick?: (id: string) => void
+  /** A custom pin was dragged to a new spot. */
+  onMyPinDrag?: (id: string, p: LngLat) => void
+}
+
+export interface MyPin {
+  id: string
+  coords: LngLat
+  color: string
+  title: string
+  icon?: string
+  /** Your own pins can be dragged; saved places stay where the map data has them. */
+  draggable: boolean
 }
 
 type FC = FeatureCollection
@@ -144,7 +161,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
-  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, navigating = false, navBearing = 0, marker = 'dot', fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
+  const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, navigating = false, navBearing = 0, marker = 'dot', fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units, myPins, myPinFocus = null } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
   const [ready, setReady] = useState(false)
@@ -156,7 +173,11 @@ export function MapView(props: Props) {
   const pinDragRef = useRef(onPinDrag)
   const famousClickRef = useRef(onFamousClick)
   const famousRef = useRef(famous)
+  const myPinClickRef = useRef(props.onMyPinClick)
+  const myPinDragRef = useRef(props.onMyPinDrag)
   useEffect(() => {
+    myPinClickRef.current = props.onMyPinClick
+    myPinDragRef.current = props.onMyPinDrag
     contextRef.current = onMapContext
     pinDragRef.current = onPinDrag
     famousClickRef.current = onFamousClick
@@ -638,6 +659,37 @@ export function MapView(props: Props) {
     const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(markPin).addTo(map)
     return () => { marker.remove() }
   }, [markPin, ready])
+
+  // My Maps pins: colored, labeled, the highlighted one on top. Custom pins can be dragged.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map || !myPins?.length) return
+    const markers = myPins.map((p) => {
+      const el = document.createElement('div')
+      el.className = `my-pin${p.id === myPinFocus ? ' focus' : ''}${p.draggable ? ' drag' : ''}`
+      el.setAttribute('role', 'button')
+      el.setAttribute('aria-label', p.title)
+      el.innerHTML = pinSvg(p.color)
+      if (p.icon) {
+        const ic = document.createElement('span')
+        ic.className = 'my-pin-icon'
+        ic.textContent = p.icon
+        el.appendChild(ic)
+      }
+      const tag = document.createElement('span')
+      tag.className = 'my-pin-label'
+      tag.textContent = p.title
+      el.appendChild(tag)
+      let dragged = false
+      el.addEventListener('click', (e) => { e.stopPropagation(); if (!dragged) myPinClickRef.current?.(p.id); dragged = false })
+      const m = new maplibregl.Marker({ element: el, anchor: 'bottom', draggable: p.draggable }).setLngLat(p.coords).addTo(map)
+      if (p.id === myPinFocus) el.style.zIndex = '3'
+      m.on('dragstart', () => { dragged = true })
+      m.on('dragend', () => { const ll = m.getLngLat(); myPinDragRef.current?.(p.id, [ll.lng, ll.lat]); setTimeout(() => { dragged = false }, 0) })
+      return m
+    })
+    return () => { markers.forEach((m) => m.remove()) }
+  }, [myPins, myPinFocus, ready])
 
   return <div ref={container} className="map" aria-label="Map" />
 }
