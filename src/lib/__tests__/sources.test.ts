@@ -81,6 +81,17 @@ describe('search never dead-ends', () => {
     expect(r.places).toHaveLength(4)
   })
 
+  it('puts a far-away exact name above nearby partial matches', async () => {
+    const f = (name: string, c: [number, number]) => ({ geometry: { coordinates: c }, properties: { name } })
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('location_bias_scale')) return json({ features: [f('Paris', [2.35, 48.86])] })
+      if (url.includes('photon')) return json({ features: [f('Paris Lake', [-119.9, 37.9]), f('Parish Road', [-120, 37.6]), f('Sacred Heart Parish', [-120.8, 37.5])] })
+      return json({}, 503)
+    }))
+    const r = await searchAll('Paris', undefined, [-119.6, 37.75])
+    expect(r.places[0]).toMatchObject({ name: 'Paris', far: true })
+  })
+
   it('says offline only when every source fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
     await expect(searchAll('nothing works here', undefined, TEWKSBURY)).rejects.toBeInstanceOf(SearchOfflineError)

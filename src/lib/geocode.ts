@@ -134,9 +134,14 @@ async function searchFresh(q: string, center: LngLat, signal: AbortSignal | unde
   const nearbyAnywhere = take(anywhere.filter((p) => dist(p) <= NEAR_LIMIT_M))
   // A name that only exists far away ("Yosemite National Park" typed in India) goes first, so
   // loose nearby matches ("Nanda Devi National Park") don't hide it. Not for kinds like "coffee".
-  const namedNear = [...close, ...nearbyAnywhere].some(named)
-  const farNamed = kind || namedNear ? []
-    : take(anywhere.filter((p) => named(p) && dist(p) > NEAR_LIMIT_M)).slice(0, 3).map((p) => ({ ...p, far: true }))
+  // Same for an exact name ("Paris" typed in California, where only "Paris Lake" is near).
+  const exact = (p: Place) => p.name.toLowerCase() === q.toLowerCase()
+  const nearby = [...close, ...nearbyAnywhere]
+  const namedNear = nearby.some(named)
+  const exactNear = nearby.some(exact)
+  const farNamed = kind ? []
+    : take(anywhere.filter((p) => dist(p) > NEAR_LIMIT_M && ((!namedNear && named(p)) || (!exactNear && exact(p)))))
+      .slice(0, 3).map((p) => ({ ...p, far: true }))
   // Far-away name matches ("Badminton, England") only when little is nearby, and labeled.
   const far = close.length + nearbyAnywhere.length >= MIN_LOCAL ? []
     : take(anywhere.filter((p) => dist(p) > NEAR_LIMIT_M)).map((p) => ({ ...p, far: true }))
