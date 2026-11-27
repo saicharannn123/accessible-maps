@@ -1,5 +1,6 @@
 import { OSM_API_URL, OVERPASS_URLS, PHOTON_REVERSE_URL } from '../config'
 import { distanceMeters } from './geo'
+import { safeWebUrl } from './safeUrl'
 import type { LngLat } from './types'
 
 /** One "near me" category, like the quick buttons in Google Maps and Apple Maps. */
@@ -142,7 +143,7 @@ export function parseNearby(elements: OsmElement[], cat: Category, center: LngLa
       address: address(t),
       openingHours: t.opening_hours,
       phone: t.phone ?? t['contact:phone'],
-      website: t.website ?? t['contact:website'],
+      website: safeWebUrl(t.website ?? t['contact:website']),
       wheelchair: wc === 'yes' || wc === 'limited' || wc === 'no' ? wc : 'unknown',
     })
   }

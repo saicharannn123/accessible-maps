@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from './places'
+import { safeWebUrl } from './safeUrl'
 import type { LngLat } from './types'
 
 // Well-known places (national parks, landmarks, museums, waterfalls, capitals…) from Wikidata,
@@ -118,8 +119,8 @@ export function parseFamous(rows: Row[]): FamousPlace[] {
       kind: kind.label,
       icon: kind.icon,
       about: r.about?.value,
-      photo: r.photo ? thumb(r.photo.value) : undefined,
-      wiki: r.wiki?.value.replace(/^http:/, 'https:'),
+      photo: r.photo ? safeWebUrl(thumb(r.photo.value)) : undefined,
+      wiki: safeWebUrl(r.wiki?.value.replace(/^http:/, 'https:')),
       fame: Number(r.fame?.value ?? 0),
     })
   }

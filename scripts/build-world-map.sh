@@ -26,6 +26,7 @@ echo "== Applying OpenStreetMap edits up to today"
 
 echo "== Building tiles"
 curl -fsSL -o planetiler.jar "https://github.com/onthegomap/planetiler/releases/download/v${PLANETILER_VERSION}/planetiler.jar"
+if [ -n "${PLANETILER_SHA256:-}" ]; then echo "$PLANETILER_SHA256  planetiler.jar" | sha256sum -c -; fi
 java -Xmx100g -jar planetiler.jar \
   --osm-path=planet.osm.pbf --bounds=world --download --download-threads=10 --http-retries=5 \
   --nodemap-type=array --storage=mmap --force \

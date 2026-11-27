@@ -19,7 +19,7 @@ on:
 
 permissions:
   contents: read
-  actions: write
+  actions: write # start the site redeploy at the end
 
 concurrency:
   group: world-map
@@ -27,6 +27,10 @@ concurrency:
 
 env:
   PLANETILER_VERSION: '0.9.2'
+  PLANETILER_SHA256: c8fb2477267a8f59545299e4fa0ac02d35a518079305cc396d4c41d059145cdd
+  # The Hetzner command-line tool handles the HCLOUD_TOKEN secret, so use a fixed, checked version.
+  HCLOUD_CLI_VERSION: '1.71.0'
+  HCLOUD_CLI_SHA256: ab14e964074ea61c9b103df852134833787da9df094ed6967f7bb0b588e7abc9
   R2_BUCKET: ${{ vars.R2_BUCKET || 'bm-locator-maps' }}
   SERVER_TYPE: ${{ vars.HCLOUD_SERVER_TYPE || 'ccx63' }}
   LOCATION: ${{ vars.HCLOUD_LOCATION || 'fsn1' }}
@@ -37,7 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Check the accounts are connected
         id: ready
@@ -74,7 +80,9 @@ jobs:
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
-          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz | tar -xz hcloud
+          curl -fsSL -o hcloud.tar.gz "https://github.com/hetznercloud/cli/releases/download/v${HCLOUD_CLI_VERSION}/hcloud-linux-amd64.tar.gz"
+          echo "$HCLOUD_CLI_SHA256  hcloud.tar.gz" | sha256sum -c -
+          tar -xzf hcloud.tar.gz hcloud
           sudo mv hcloud /usr/local/bin/
           ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/build"
           hcloud ssh-key create --name "$SERVER_NAME" --public-key-from-file "$HOME/.ssh/build.pub"
@@ -97,8 +105,8 @@ jobs:
           for i in $(seq 1 30); do $SSH true 2>/dev/null && break; sleep 10; done
           scp -i "$HOME/.ssh/build" -o StrictHostKeyChecking=no scripts/build-world-map.sh "root@$IP:/root/"
           # Secrets go over SSH on stdin, never on a command line or into the log.
-          printf 'export R2_ACCOUNT_ID=%q R2_ACCESS_KEY_ID=%q R2_SECRET_ACCESS_KEY=%q R2_BUCKET=%q PLANETILER_VERSION=%q HCLOUD_TOKEN=%q SERVER_ID=%q\nbash /root/build-world-map.sh\n' \
-            "$R2_ACCOUNT_ID" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" "$R2_BUCKET" "$PLANETILER_VERSION" "$HCLOUD_TOKEN" "$SERVER_ID" \
+          printf 'export R2_ACCOUNT_ID=%q R2_ACCESS_KEY_ID=%q R2_SECRET_ACCESS_KEY=%q R2_BUCKET=%q PLANETILER_VERSION=%q PLANETILER_SHA256=%q HCLOUD_TOKEN=%q SERVER_ID=%q\nbash /root/build-world-map.sh\n' \
+            "$R2_ACCOUNT_ID" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" "$R2_BUCKET" "$PLANETILER_VERSION" "$PLANETILER_SHA256" "$HCLOUD_TOKEN" "$SERVER_ID" \
             | $SSH bash -s
 
       - name: Delete the build server
