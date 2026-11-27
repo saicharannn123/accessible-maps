@@ -1,7 +1,8 @@
 import { GEOCODER_URL, PHOTON_REVERSE_URL, PILOT_CITY } from '../config'
-import { distanceMeters } from './geo'
+import { distanceMeters, formatDistance } from './geo'
 import { matchKind, photonPlace, searchNearbyKind, searchNearbyTagged } from './search'
-import { AnswerCache, fetchJson, nominatimSearch } from './sources'
+import { AnswerCache, fetchJson, nominatimPostcode, nominatimSearch } from './sources'
+import { cityStatePostal, cleanPostcode, mergeSameAddresses, postalCodeName, postalQuery } from './address'
 import type { LngLat, Place } from './types'
 
 export interface SearchResults {
@@ -95,7 +96,65 @@ export async function searchAll(query: string, signal?: AbortSignal, near?: LngL
   }
 }
 
+/**
+ * A search that is only a postal code ("07039", "400001"): the code's area near you first,
+ * then the same code in other countries under "Farther away". Nominatim knows postal-code
+ * areas; if it's down, the area is pieced together from Photon addresses with that code.
+ */
+async function searchPostcode(code: string, center: LngLat, signal?: AbortSignal): Promise<SearchResults & { offline?: boolean }> {
+  const failed = { n: 0 }
+  const quiet = quietly(failed)
+  // Nominatim knows "07039" but not always "07039-1234".
+  const lookup = /^\d{5}-\d{4}$/.test(code) ? code.slice(0, 5) : code
+  const [areas, addresses] = await Promise.all([
+    quiet(nominatimPostcode(lookup, center, signal)),
+    quiet(photon(lookup, center, '&limit=20', signal)),
+  ])
+  const dist = (p: Place) => distanceMeters(center, p.coords)
+  let found = areas
+  if (!found.length) found = postcodeAreasFrom(addresses, lookup, center)
+  // One answer per country (Nominatim sometimes has the same area twice).
+  const seen = new Set<string>()
+  found = found.filter((p) => { const k = `${p.country}|${p.postcode ?? p.name}`; if (seen.has(k)) return false; seen.add(k); return true })
+  found.sort((a, b) => dist(a) - dist(b))
+  const places = found.map((p) => (dist(p) > NEAR_LIMIT_M * 2 ? { ...p, far: true } : p))
+  // A far-only list reads better with nearest first anyway; "Farther away" labels it.
+  return { kind: null, places: places.slice(0, 8), offline: failed.n >= 2 }
+}
+
+/** Postal-code areas built from Photon addresses that carry the code: their middle, and their usual town. */
+function postcodeAreasFrom(fs: PhotonFeature[], code: string, center: LngLat): Place[] {
+  const groups = new Map<string, PhotonFeature[]>()
+  for (const f of fs) {
+    const country = f.properties.countrycode?.toUpperCase()
+    const pc = cleanPostcode(f.properties.postcode, country)?.replace(/\s+/g, '')
+    if (!pc || !pc.startsWith(code.replace(/\s+/g, '').toUpperCase())) continue
+    const k = `${country}|${pc}`
+    groups.set(k, [...(groups.get(k) ?? []), f])
+  }
+  return [...groups.values()].map((g) => {
+    const p0 = g[0].properties
+    const country = p0.countrycode?.toUpperCase()
+    const coords: LngLat = [g.reduce((s, f) => s + f.geometry.coordinates[0], 0) / g.length, g.reduce((s, f) => s + f.geometry.coordinates[1], 0) / g.length]
+    const most = (pick: (f: PhotonFeature) => string | undefined) => {
+      const n = new Map<string, number>()
+      for (const f of g) { const v = pick(f); if (v) n.set(v, (n.get(v) ?? 0) + 1) }
+      return [...n.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    }
+    const area = cityStatePostal({ city: most((f) => f.properties.city || f.properties.district), state: most((f) => f.properties.state), country })
+    const postcode = cleanPostcode(p0.postcode, country) ?? code
+    const away = formatDistance(distanceMeters(center, coords))
+    return { name: postcode, detail: [away, postalCodeName(country), area].filter(Boolean).join(' · '), coords, icon: '📮', postcode, country, area: area || undefined }
+  })
+}
+
 async function searchFresh(q: string, center: LngLat, signal: AbortSignal | undefined, withTagged: boolean): Promise<SearchResults & { offline?: boolean }> {
+  const code = postalQuery(q)
+  if (code) {
+    const r = await searchPostcode(code, center, signal)
+    if (r.places.length || r.offline) return r
+    // Nothing knows it as a postal code (it may be a house number or a name): search normally.
+  }
   const kind = matchKind(q)
   const dist = (p: Place) => distanceMeters(center, p.coords)
   const byDistance = (a: Place, b: Place) => dist(a) - dist(b)
@@ -146,7 +205,10 @@ async function searchFresh(q: string, center: LngLat, signal: AbortSignal | unde
   const far = close.length + nearbyAnywhere.length >= MIN_LOCAL ? []
     : take(anywhere.filter((p) => dist(p) > NEAR_LIMIT_M)).map((p) => ({ ...p, far: true }))
 
-  const places = [...farNamed, ...close, ...nearbyAnywhere.sort(byDistance)].slice(0, 12).concat(far.slice(0, 4))
+  // The same address can come back twice (a house point and its building outline, or from two
+  // sources); keep one. Different places that share a name stay, told apart by town and code.
+  const places = mergeSameAddresses([...farNamed, ...close, ...nearbyAnywhere.sort(byDistance)]).slice(0, 12)
+    .concat(mergeSameAddresses(far).slice(0, 4))
   return { kind: kind ? { label: kind.label, icon: kind.icon, tagged: !!(kind.sport || kind.cuisine) } : null, places, offline }
 }
 
@@ -163,7 +225,14 @@ export async function reverseGeocode(c: LngLat, signal?: AbortSignal): Promise<P
   const onPlace = !!p.name && distanceMeters(c, f.geometry.coordinates) <= 40
   const name = (onPlace ? p.name : street) || p.name || street
   if (!name) return null
-  const detail = [name === p.name ? street : '', p.city, p.state].filter(Boolean).join(', ')
+  const country = p.countrycode?.toUpperCase()
+  const postcode = cleanPostcode(p.postcode, country)
+  const area = cityStatePostal({ city: p.city || p.district, state: p.state, postcode, country })
+  const detail = [name === p.name ? street : '', area].filter(Boolean).join(', ')
   // Keep the exact spot that was tapped; the address just names it.
-  return { name, detail, coords: c }
+  const place: Place = { name, detail, coords: c }
+  if (postcode) place.postcode = postcode
+  if (country) place.country = country
+  if (area) place.area = area
+  return place
 }

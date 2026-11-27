@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { searchAll, type SearchResults } from '../lib/geocode'
 import type { Place } from '../lib/types'
+import { searchBarText } from '../lib/address'
 
 interface Props {
   label: string
@@ -23,7 +24,7 @@ let nextId = 0
  * Enter picks the highlighted (or top) suggestion, even if it is still loading.
  */
 export function SearchBox({ label, placeholder, value, onSelect, extraOptions = [], near, hideLabel, onFocus }: Props) {
-  const [text, setText] = useState(value?.name ?? '')
+  const [text, setText] = useState(value ? searchBarText(value) : '')
   const [found, setFound] = useState<(SearchResults & { query: string }) | null>(null)
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(-1)
@@ -40,18 +41,19 @@ export function SearchBox({ label, placeholder, value, onSelect, extraOptions = 
   const [shownValue, setShownValue] = useState(value)
   if (value !== shownValue) {
     setShownValue(value)
-    setText(value?.name ?? '')
+    setText(value ? searchBarText(value) : '')
   }
 
   const query = text.trim()
   // Don't search for the name of the place that's already chosen ("My location").
-  const wantSearch = open && query.length >= 2 && query !== value?.name
+  const wantSearch = open && query.length >= 2 && query !== value?.name && !(value && query === searchBarText(value))
   const places = wantSearch && found?.query === query ? found.places : []
   const loading = wantSearch && found?.query !== query && !error
 
   const choose = (p: Place) => {
     onSelectRef.current(p)
-    setText(p.name)
+    // The full address goes in the bar, postal code included: "276 Mill Road, Livingston, NJ 07039".
+    setText(searchBarText(p))
     setOpen(false)
     setActive(-1)
   }
