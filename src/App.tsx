@@ -227,6 +227,9 @@ export default function App() {
   /** Select a place: highlight and center its pin, show its card and related spots, and make it the center for categories. */
   const selectAnchor = useCallback((p: Place, addToRecent = true) => {
     if (addToRecent) remember({ kind: 'place', place: { name: p.name, detail: p.detail, coords: p.coords } })
+    // A peak or park found by search gets its own icon instead of the plain pin.
+    const kind = kindFromOsmTag(p.osmTag)
+    if (!p.icon && kind && kind !== 'other') p = { ...p, icon: kind === 'mountain' ? '⛰️' : kind === 'park' ? '🌲' : '🏙️' }
     setSearchPin(p)
     setSelectedId(null)
     setTab('nearby')

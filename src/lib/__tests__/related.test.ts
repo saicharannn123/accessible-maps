@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  containerSpots, coreName, groupFromText, insideQuery, kindFromOsmTag, kindFromText, linksQuery, mergeSpots,
+  adminAreaQuery, containerSpots, coreName, groupFromText, insideQuery, kindFromOsmTag, kindFromText, linksQuery, mergeSpots,
   nearbySpots, osmQuery, parseLinks, parseOsmRows, wantsFor, type RelatedSpot,
 } from '../related'
 import type { LngLat } from '../types'
@@ -43,6 +43,12 @@ describe('queries', () => {
     expect(q).toContain('"trailhead"')
     expect(q).toContain('geof:centroid')
     expect(q).not.toContain('hasCentroid')
+  })
+  it('looks in the districts around the place, nearest first', () => {
+    const q = adminAreaQuery('node/299492171', wantsFor('mountain'), NANDA_DEVI)
+    expect(q).toContain('ogc:sfContains <https://www.openstreetmap.org/node/299492171>')
+    expect(q).toContain('?lvl >= 5 && ?lvl <= 8')
+    expect(q).toContain('ORDER BY ASC(geof:distance(?c, "POINT(79.97060 30.37570)"')
   })
   it('asks what is inside an area', () => {
     expect(insideQuery(['way/126758723'], wantsFor('park'))).toContain('VALUES ?a { <https://www.openstreetmap.org/way/126758723> }')
