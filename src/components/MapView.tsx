@@ -10,6 +10,7 @@ import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import { cleanStyle, signatureStyle } from '../lib/cleanStyle'
 import { SIGNAL_MIN_ZOOM, type Signal } from '../lib/signals'
 import type { FamousPlace } from '../lib/famous'
+import { GROUP_LOOK, type RelatedSpot } from '../lib/related'
 import { renameExpression } from '../lib/placeNames'
 import { dashedFilter, NE_BORDERS_URL, solidFilter, type WorldviewCode } from '../lib/worldview'
 import { bboxOf, distanceMeters } from '../lib/geo'
@@ -41,7 +42,7 @@ interface Props {
   stops: LngLat[]
   layers: Layers
   /** Move the camera here; keepZoom leaves the zoom as it is (e.g. after tapping the map). */
-  flyTo: { at: LngLat; keepZoom?: boolean } | null
+  flyTo: { at: LngLat; keepZoom?: boolean; zoom?: number } | null
   /** Traffic lights and pedestrian crossing lights, shown when zoomed in. */
   signals: Signal[]
   /** Well-known places for the country or region in view. */
@@ -49,6 +50,15 @@ interface Props {
   onFamousClick: (p: FamousPlace) => void
   /** A plain red pin: the place picked in search, or where a report goes. */
   markPin: LngLat | null
+  /** Name shown under the pin when it is the selected place; the pin is then drawn highlighted. */
+  markLabel?: string | null
+  /** Spots related to the selected place, drawn with their own icons. */
+  related?: RelatedSpot[]
+  /** The related spot picked in the list or on the map, drawn larger with a halo. */
+  activeRelatedId?: string | null
+  onRelatedClick?: (id: string) => void
+  /** A place is selected: fade the other pins (famous places, category results) so its related spots stand out. */
+  dimOthers?: boolean
   /** Tapping the map drops a pin, so show a crosshair cursor. */
   pickMode: boolean
   places: NearbyPlace[]
@@ -144,6 +154,7 @@ function escapeHtml(s: string): string {
 }
 
 export function MapView(props: Props) {
+  const { related = [], activeRelatedId = null, onRelatedClick, dimOthers = false, markLabel = null } = props
   const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, navigating = false, navBearing = 0, marker = 'dot', fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
@@ -156,7 +167,9 @@ export function MapView(props: Props) {
   const pinDragRef = useRef(onPinDrag)
   const famousClickRef = useRef(onFamousClick)
   const famousRef = useRef(famous)
+  const relatedClickRef = useRef(onRelatedClick)
   useEffect(() => {
+    relatedClickRef.current = onRelatedClick
     contextRef.current = onMapContext
     pinDragRef.current = onPinDrag
     famousClickRef.current = onFamousClick
@@ -193,7 +206,7 @@ export function MapView(props: Props) {
       created = map
       mapRef.current = map
       // Category pins are drawn on demand, so they survive switching the map look.
-      map.on('styleimagemissing', (e) => { addCategoryIcon(map, e.id); addSignalIcon(map, e.id); addFamousIcon(map, e.id) })
+      map.on('styleimagemissing', (e) => { addCategoryIcon(map, e.id); addSignalIcon(map, e.id); addFamousIcon(map, e.id); addRelatedIcon(map, e.id) })
       // Zoomed out, the map is a round 3D globe floating in violet space; zooming in flattens it
       // to the normal street map. Re-applied on every style load so switching looks keeps it.
       map.on('style.load', () => applyGlobe(map))
@@ -212,7 +225,7 @@ export function MapView(props: Props) {
       }
 
       map.on('load', () => {
-        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'places', 'me']) {
+        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'related', 'places', 'me']) {
           map.addSource(id, { type: 'geojson', data: empty })
         }
         map.addLayer({ id: 'lit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], true],
@@ -268,6 +281,26 @@ export function MapView(props: Props) {
             'symbol-sort-key': ['-', 0, ['get', 'fame']],
           },
           paint: { 'text-color': '#2b2350', 'text-halo-color': '#ffffff', 'text-halo-width': 1.6 } })
+        // Spots related to the selected place: one icon and color per kind (mountain, park, trail,
+        // visitor facility…). Direct links and the active spot carry their name.
+        map.addLayer({ id: 'related-halo', type: 'circle', source: 'related', filter: ['==', ['get', 'active'], true],
+          paint: { 'circle-radius': 24, 'circle-color': ['get', 'color'], 'circle-opacity': 0.25, 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 2 } })
+        map.addLayer({ id: 'related', type: 'symbol', source: 'related',
+          layout: {
+            'icon-image': ['concat', 'rel-', ['get', 'group']],
+            'icon-size': ['case', ['==', ['get', 'active'], true], 1.25, ['==', ['get', 'direct'], true], 1, 0.85],
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+            'text-field': ['case', ['any', ['==', ['get', 'active'], true], ['==', ['get', 'direct'], true]], ['get', 'name'], ''],
+            'text-font': ['Noto Sans Bold'],
+            'text-size': ['case', ['==', ['get', 'active'], true], 14, 12],
+            'text-anchor': 'top',
+            'text-offset': [0, 1.3],
+            'text-max-width': 9,
+            'text-optional': true,
+            'symbol-sort-key': ['case', ['==', ['get', 'active'], true], 0, ['==', ['get', 'direct'], true], 1, 2],
+          },
+          paint: { 'text-color': '#2b2350', 'text-halo-color': '#ffffff', 'text-halo-width': 1.8 } })
         map.addLayer({ id: 'places-selected', type: 'circle', source: 'places', filter: ['==', ['get', 'selected'], true],
           paint: { 'circle-radius': 16, 'circle-color': ['get', 'color'], 'circle-opacity': 0.22 } })
         map.addLayer({ id: 'places', type: 'symbol', source: 'places',
@@ -295,6 +328,11 @@ export function MapView(props: Props) {
           if (id) placeClickRef.current(String(id))
         })
 
+        map.on('click', 'related', (e) => {
+          const id = e.features?.[0]?.properties?.id
+          if (id) relatedClickRef.current?.(String(id))
+        })
+
         map.on('click', 'famous', (e) => {
           const id = e.features?.[0]?.properties?.id
           const p = famousRef.current.find((f) => f.id === id)
@@ -319,7 +357,7 @@ export function MapView(props: Props) {
             `<strong>${escapeHtml(p.label)}</strong><br>${escapeHtml(p.ago)}${p.note ? `<br>"${escapeHtml(p.note)}"` : ''}`,
           ).addTo(map)
         })
-        for (const id of ['restrooms', 'reports', 'places', 'famous']) {
+        for (const id of ['restrooms', 'reports', 'places', 'famous', 'related']) {
           map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
           map.on('mouseleave', id, () => { map.getCanvas().style.cursor = pickModeRef.current ? 'crosshair' : '' })
         }
@@ -328,7 +366,7 @@ export function MapView(props: Props) {
       })
 
       map.on('click', (e) => {
-        const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places', 'famous'] }) : []
+        const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places', 'famous', 'related'] }) : []
         if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
       })
       map.on('contextmenu', (e) => {
@@ -519,6 +557,33 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     if (!ready) return
+    setData('related', {
+      type: 'FeatureCollection',
+      features: related.map((r) => point(r.coords, {
+        id: r.id, name: r.name, group: r.group, color: GROUP_LOOK[r.group].color, direct: r.direct, active: r.id === activeRelatedId,
+      })),
+    })
+  }, [related, activeRelatedId, ready])
+
+  // While a place is selected, other pins fade so its related spots stand out.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    const apply = () => {
+      const o = dimOthers ? 0.3 : 1
+      for (const id of ['famous', 'places']) {
+        if (!map.getLayer(id)) continue
+        map.setPaintProperty(id, 'icon-opacity', o)
+        if (id === 'famous') map.setPaintProperty(id, 'text-opacity', o)
+      }
+    }
+    apply()
+    map.on('style.load', apply)
+    return () => { map.off('style.load', apply) }
+  }, [dimOthers, ready])
+
+  useEffect(() => {
+    if (!ready) return
     setData('me', myLocation ? { type: 'FeatureCollection', features: [point(myLocation, { acc: myAccuracy ?? 0 })] } : empty)
   }, [myLocation, myAccuracy, ready])
 
@@ -618,7 +683,7 @@ export function MapView(props: Props) {
     // On phones the bottom sheet covers the lower part of the map, so aim above it.
     const offset: [number, number] = window.innerWidth <= 720 ? [0, -Math.round(window.innerHeight * 0.3)] : [-200, -30]
     if (flyTo.keepZoom) map.easeTo({ center: flyTo.at, offset, duration: 600 })
-    else map.flyTo({ center: flyTo.at, zoom: Math.max(map.getZoom(), 15), offset })
+    else map.flyTo({ center: flyTo.at, zoom: flyTo.zoom ?? Math.max(map.getZoom(), 15), offset })
   }, [flyTo])
 
   const pickModeRef = useRef(pickMode)
@@ -633,11 +698,12 @@ export function MapView(props: Props) {
     const map = mapRef.current
     if (!ready || !map || !markPin) return
     const el = document.createElement('div')
-    el.className = 'trip-pin end mark-pin'
-    el.innerHTML = PIN_SVG
+    el.className = `trip-pin end mark-pin${markLabel ? ' selected-pin' : ''}`
+    el.innerHTML = markLabel ? `<span class="pin-pulse" aria-hidden="true"></span>${SELECTED_PIN_SVG}<span class="pin-label">${escapeHtml(markLabel)}</span>` : PIN_SVG
+    if (markLabel) el.setAttribute('aria-label', `Selected: ${markLabel}`)
     const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat(markPin).addTo(map)
     return () => { marker.remove() }
-  }, [markPin, ready])
+  }, [markPin, markLabel, ready])
 
   return <div ref={container} className="map" aria-label="Map" />
 }
@@ -650,6 +716,8 @@ function pinSvg(color: string, label?: string): string {
   return `<svg width="28" height="38" viewBox="0 0 28 38" aria-hidden="true"><path d="M14 37s12-13.2 12-22.5A12 12 0 0 0 2 14.5C2 23.8 14 37 14 37z" fill="${color}" stroke="#fff" stroke-width="2"/>${center}</svg>`
 }
 const PIN_SVG = pinSvg('#dc2626')
+/** The selected place: a bigger pin in the brand violet. */
+const SELECTED_PIN_SVG = pinSvg('#5b3df5').replace('width="28" height="38"', 'width="38" height="51"')
 
 const BASE_BORDER_LAYERS = ['boundary_2', 'boundary_disputed']
 const WV_SOURCE = 'ne-borders'
@@ -706,7 +774,7 @@ function applyNames(map: MlMap, nameView: string | null) {
   }
 }
 
-const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'places', 'me', WV_SOURCE]
+const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'related', 'places', 'me', WV_SOURCE]
 
 /** Keep our sources and layers when the base style changes: borders under labels, the rest on top. */
 function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification {
@@ -861,5 +929,34 @@ function addFamousIcon(map: MlMap, id: string) {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(id.slice(4), c, c + 2)
+  map.addImage(id, ctx.getImageData(0, 0, size, size), { pixelRatio: 2 })
+}
+
+/** Related-spot icons: a white disc ringed in the kind's color, with its emoji (⛰️ 🌲 🥾 ℹ️…). */
+function addRelatedIcon(map: MlMap, id: string) {
+  if (!id.startsWith('rel-') || map.hasImage(id)) return
+  const look = GROUP_LOOK[id.slice(4) as keyof typeof GROUP_LOOK]
+  if (!look) return
+  const size = 64, r = 27, c = size / 2
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.shadowColor = 'rgba(43,35,80,0.35)'
+  ctx.shadowBlur = 5
+  ctx.shadowOffsetY = 2
+  ctx.beginPath()
+  ctx.arc(c, c, r, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  ctx.lineWidth = 5
+  ctx.strokeStyle = look.color
+  ctx.stroke()
+  ctx.font = '28px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(look.icon, c, c + 2)
   map.addImage(id, ctx.getImageData(0, 0, size, size), { pixelRatio: 2 })
 }
