@@ -353,8 +353,10 @@ export function parseOverpass(elements: { type: string; id: number; lat?: number
 }
 
 /**
- * Wanted spots in the districts, counties or towns (admin levels 5-8) that contain or touch the
- * place. QLever has these "contains" links worked out in advance, so this answers in a couple of
+ * Wanted spots in the districts, counties or towns (admin levels 5-8) that contain the place,
+ * and inside the place's own outline (a park or city). Districts that only touch the outline
+ * are left out: for a big city like Paris that's dozens of towns and the query times out.
+ * QLever has these "contains" links worked out in advance, so this answers in a couple of
  * seconds, where a plain map-box search over all the world's peaks and parks can take 25 s.
  * Exported for tests.
  */
@@ -365,8 +367,9 @@ PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
 PREFIX ogc: <http://www.opengis.net/rdf#>
 SELECT ?o (MIN(?w) AS ?want) (SAMPLE(?nm) AS ?name) (SAMPLE(?en) AS ?nameEn) (SAMPLE(?wkt) AS ?c) (SAMPLE(?wc) AS ?wheelchair) (SAMPLE(?wd) AS ?wikidata) WHERE {
   { SELECT DISTINCT ?a WHERE {
-    { ?a ogc:sfContains <https://www.openstreetmap.org/${osm}> } UNION { ?a ogc:sfIntersects <https://www.openstreetmap.org/${osm}> }
-    ?a ${KEY('boundary')} "administrative" . ?a ${KEY('admin_level')} ?lvl . FILTER(?lvl >= 5 && ?lvl <= 8)
+    { ?a ogc:sfContains <https://www.openstreetmap.org/${osm}> .
+      ?a ${KEY('boundary')} "administrative" . ?a ${KEY('admin_level')} ?lvl . FILTER(?lvl >= 5 && ?lvl <= 8) }${osm.startsWith('node/') ? '' : `
+    UNION { VALUES ?a { <https://www.openstreetmap.org/${osm}> } }`}
   } }
   ?a ogc:sfContains ?o .
   ${parts.join(' UNION\n  ')}
@@ -384,7 +387,7 @@ async function osmHits(wants: Want[], at: LngLat, meters: number, signal?: Abort
   // Fast path: the districts or towns around the place, then keep what's within reach.
   if (osm) {
     try {
-      const hits = parseOsmRows(await sparql(QLEVER_OSM_URL, adminAreaQuery(osm, wants, at), signal, 15000))
+      const hits = parseOsmRows(await sparql(QLEVER_OSM_URL, adminAreaQuery(osm, wants, at), signal, 10000))
         .filter((h) => distanceMeters(at, h.coords) <= meters)
       if (hits.length) return hits
     } catch {
