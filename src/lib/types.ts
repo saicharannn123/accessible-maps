@@ -37,6 +37,16 @@ export interface Place {
   osmTag?: string
   /** Wikidata item, e.g. "Q123", for places that have one. */
   wikidata?: string
+  /** Postal code from the address provider (ZIP code, PIN code...), when it has one. */
+  postcode?: string
+  /** Two-letter country code, e.g. "US" or "IN". */
+  country?: string
+  /** Town, state and postal code, e.g. "Livingston, NJ 07039" (no distance). */
+  area?: string
+  /** House number and street, e.g. "276 Mill Road". */
+  street?: string
+  /** County or district, used to tell apart places that otherwise read the same. */
+  county?: string
 }
 
 export type ReportType =

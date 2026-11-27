@@ -29,7 +29,7 @@ describe('backup sources', () => {
       lat: '42.6', lon: '-71.2', name: 'Bay State Badminton', display_name: 'Bay State Badminton, Main St, Tewksbury',
       address: { house_number: '5', road: 'Main St', town: 'Tewksbury', state: 'Massachusetts' },
     }], undefined)
-    expect(p).toEqual({ name: 'Bay State Badminton', detail: '5 Main St, Tewksbury, Massachusetts', coords: [-71.2, 42.6] })
+    expect(p).toMatchObject({ name: 'Bay State Badminton', detail: '5 Main St, Tewksbury, Massachusetts', coords: [-71.2, 42.6] })
   })
 
   it('asks OSM for a sport inside a box around you', () => {

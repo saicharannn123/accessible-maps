@@ -1,4 +1,5 @@
 import { distanceMeters, formatDistance } from './geo'
+import { cityStatePostal, cleanPostcode, postalCodeName } from './address'
 import type { LngLat, Place } from './types'
 
 // Backup search sources, so a search still answers when the main one (Photon) is busy or down.
@@ -57,6 +58,9 @@ interface NominatimRow {
   name?: string
   display_name: string
   type?: string
+  category?: string
+  osm_type?: string
+  osm_id?: number
   address?: Record<string, string>
 }
 
@@ -67,10 +71,23 @@ export function nominatimPlaces(rows: NominatimRow[], from: LngLat | undefined):
     const a = r.address ?? {}
     const street = [a.house_number, a.road].filter(Boolean).join(' ')
     const town = a.city || a.town || a.village || a.hamlet || a.suburb
-    const name = r.name || street || r.display_name.split(',')[0]
-    const where = [r.name ? street : '', town, a.state].filter(Boolean).join(', ')
+    const country = a.country_code?.toUpperCase()
+    const postcode = cleanPostcode(a.postcode, country)
+    const isPostcodeArea = r.type === 'postcode'
+    const area = cityStatePostal({ city: town, state: a.state, postcode: isPostcodeArea ? undefined : postcode, country })
+    const name = isPostcodeArea ? (postcode ?? r.display_name.split(',')[0]) : r.name || street || r.display_name.split(',')[0]
+    const where = [r.name && !isPostcodeArea ? street : '', area].filter(Boolean).join(', ')
     const away = from ? formatDistance(distanceMeters(from, coords)) : ''
-    return { name, detail: [away, where].filter(Boolean).join(' · '), coords }
+    const what = isPostcodeArea ? postalCodeName(country) : ''
+    const place: Place = { name, detail: [away, what, where].filter(Boolean).join(' · '), coords }
+    if (postcode) place.postcode = postcode
+    if (country) place.country = country
+    if (area) place.area = area
+    if (street) place.street = street
+    if (a.county) place.county = a.county
+    if (r.osm_type && r.osm_id) place.osm = `${r.osm_type}/${r.osm_id}`
+    if (isPostcodeArea) place.icon = '📮'
+    return place
   })
 }
 
@@ -84,6 +101,15 @@ export async function nominatimSearch(q: string, from: LngLat, box: string | nul
   }
   const rows = await fetchJson<NominatimRow[]>(`${NOMINATIM_URL}?${params}`, {}, { timeout: 8000, tries: 2, signal })
   return nominatimPlaces(rows, from)
+}
+
+/** Postal-code areas with this exact code (a ZIP, PIN or postcode), in any country. */
+export async function nominatimPostcode(code: string, from: LngLat, signal?: AbortSignal): Promise<Place[]> {
+  const params = new URLSearchParams({ postalcode: code, format: 'jsonv2', addressdetails: '1', limit: '10', 'accept-language': 'en' })
+  const rows = await fetchJson<NominatimRow[]>(`${NOMINATIM_URL}?${params}`, {}, { timeout: 8000, tries: 2, signal })
+  const want = code.replace(/\s+/g, '').toUpperCase()
+  const same = (r: NominatimRow) => (r.address?.postcode ?? '').replace(/\s+/g, '').toUpperCase().startsWith(want)
+  return nominatimPlaces(rows.filter((r) => r.type === 'postcode' || same(r)), from)
 }
 
 type Cell = { value: string } | undefined

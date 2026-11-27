@@ -2,6 +2,7 @@ import { OVERPASS_URLS, PHOTON_REVERSE_URL } from '../config'
 import { CATEGORIES } from './places'
 import { fetchJson, firstOf, osmNearby } from './sources'
 import { distanceMeters, formatDistance } from './geo'
+import { cityStatePostal, cleanPostcode, postalCodeName } from './address'
 import type { LngLat, Place } from './types'
 
 /**
@@ -146,7 +147,8 @@ export function matchKind(query: string): PlaceKind | null {
 interface PhotonFeature {
   geometry: { coordinates: LngLat }
   properties: { name?: string; street?: string; housenumber?: string; city?: string; district?: string; state?: string; osm_value?: string
-    osm_type?: 'N' | 'W' | 'R'; osm_id?: number; osm_key?: string }
+    osm_type?: 'N' | 'W' | 'R'; osm_id?: number; osm_key?: string; postcode?: string; county?: string; countrycode?: string
+    locality?: string; type?: string }
 }
 
 const OSM_TYPE = { N: 'node', W: 'way', R: 'relation' } as const
@@ -155,9 +157,23 @@ function placeFrom(f: PhotonFeature, from: LngLat | undefined, icon?: string): P
   const p = f.properties
   const street = [p.housenumber, p.street].filter(Boolean).join(' ')
   const name = p.name || street || 'Unnamed place'
-  const where = [p.name ? street : '', p.district, p.city, p.state].filter(Boolean).join(', ')
+  const country = p.countrycode?.toUpperCase()
+  const postcode = cleanPostcode(p.postcode, country)
+  // A postal-code area itself is named by its code; its town and state follow.
+  const isPostcodeArea = p.osm_value === 'postcode' || p.type === 'postcode'
+  const town = p.city || p.district || p.locality
+  const area = cityStatePostal({ city: town, state: p.state, postcode: isPostcodeArea ? undefined : postcode, country })
+  const district = p.district && p.district !== town ? p.district : ''
+  const where = [p.name ? street : '', district, area].filter(Boolean).join(', ')
   const away = from ? formatDistance(distanceMeters(from, f.geometry.coordinates)) : ''
-  const place: Place = { name, detail: [away, where].filter(Boolean).join(' · '), coords: f.geometry.coordinates, icon }
+  const what = isPostcodeArea ? postalCodeName(country) : ''
+  const place: Place = { name: isPostcodeArea ? (postcode ?? name) : name, detail: [away, what, where].filter(Boolean).join(' · '), coords: f.geometry.coordinates, icon }
+  if (postcode) place.postcode = postcode
+  if (country) place.country = country
+  if (area) place.area = area
+  if (street) place.street = street
+  if (p.county) place.county = p.county
+  if (isPostcodeArea) place.icon ??= '📮'
   // Keep which OpenStreetMap object this is, so a selected place can find what's related to it.
   if (p.osm_type && p.osm_id) place.osm = `${OSM_TYPE[p.osm_type]}/${p.osm_id}`
   if (p.osm_key && p.osm_value) place.osmTag = `${p.osm_key}=${p.osm_value}`

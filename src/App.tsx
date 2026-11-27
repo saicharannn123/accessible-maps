@@ -22,6 +22,7 @@ import { navProgress, stepPositions } from './lib/navigation'
 import { useSheetDrag, type SheetSnap } from './lib/useSheetDrag'
 import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
 import { reverseGeocode } from './lib/geocode'
+import { postalCodeName } from './lib/address'
 import { loadSettings, saveSettings } from './lib/settings'
 import { safeWebUrl, telHref } from './lib/safeUrl'
 import { PROFILE_LABELS, REPORT_LABELS, TRAVEL_MODES } from './lib/types'
@@ -67,6 +68,12 @@ function pinnedPlace(c: LngLat, name = 'Dropped pin'): Place {
 function zoomFor(p: Place): number {
   const kind = kindFromOsmTag(p.osmTag) ?? kindFromText(`${p.detail} ${p.icon === '⛰️' ? 'mountain' : ''}`)
   return kind === 'mountain' ? 11 : kind === 'park' ? 11 : kind === 'city' ? 12 : 15
+}
+
+/** "ZIP code 07039" / "PIN code 400001" on a place card, when the address has one. */
+function PostalLine({ place }: { place: Place }) {
+  if (!place.postcode || place.name === place.postcode) return null
+  return <p className="postal-line"><span aria-hidden="true">📮 </span>{postalCodeName(place.country)} <strong>{place.postcode}</strong></p>
 }
 
 /** The "Save to map" button from My Maps, on the selected place card and Related places rows. */
@@ -226,7 +233,7 @@ export default function App() {
   useEffect(() => { nearbyNow.current = nearby })
   /** Select a place: highlight and center its pin, show its card and related spots, and make it the center for categories. */
   const selectAnchor = useCallback((p: Place, addToRecent = true) => {
-    if (addToRecent) remember({ kind: 'place', place: { name: p.name, detail: p.detail, coords: p.coords } })
+    if (addToRecent) remember({ kind: 'place', place: { name: p.name, detail: p.detail, coords: p.coords, area: p.area, postcode: p.postcode, country: p.country } })
     // A peak or park found by search gets its own icon instead of the plain pin.
     const kind = kindFromOsmTag(p.osmTag)
     if (!p.icon && kind && kind !== 'other') p = { ...p, icon: kind === 'mountain' ? '⛰️' : kind === 'park' ? '🌲' : '🏙️' }
@@ -853,6 +860,7 @@ export default function App() {
                 <span className="selected-kicker">Selected place</span>
                 <h2>{searchPin.icon ?? '📍'} {searchPin.name}</h2>
                 {searchPin.detail && <p className="muted">{searchPin.detail}</p>}
+                <PostalLine place={searchPin} />
                 {searchPin.about && <p className="pin-about">{searchPin.about[0].toUpperCase() + searchPin.about.slice(1)}</p>}
                 <p className="muted small">{searchPin.coords[1].toFixed(4)}, {searchPin.coords[0].toFixed(4)}
                   {safeWebUrl(searchPin.wiki) && <> · <a href={safeWebUrl(searchPin.wiki)} target="_blank" rel="noreferrer">Read more on Wikipedia</a></>}</p>
@@ -1135,6 +1143,7 @@ export default function App() {
               <div className="place-card">
                 <h2>{to.name}</h2>
                 {to.detail && <p className="muted">{to.detail}</p>}
+                <PostalLine place={to} />
                 <p>
                   Nearest accessible restroom:{' '}
                   {destInfo.restroom
