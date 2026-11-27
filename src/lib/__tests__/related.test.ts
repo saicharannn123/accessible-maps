@@ -48,6 +48,9 @@ describe('queries', () => {
     const q = adminAreaQuery('node/299492171', wantsFor('mountain'), NANDA_DEVI)
     expect(q).toContain('ogc:sfContains <https://www.openstreetmap.org/node/299492171>')
     expect(q).toContain('?lvl >= 5 && ?lvl <= 8')
+    expect(q).not.toContain('sfIntersects')
+    expect(q).not.toContain('VALUES ?a')
+    expect(adminAreaQuery('relation/71525', wantsFor('city'), [2.35, 48.86])).toContain('VALUES ?a { <https://www.openstreetmap.org/relation/71525> }')
     expect(q).toContain('ORDER BY ASC(geof:distance(?c, "POINT(79.97060 30.37570)"')
   })
   it('asks what is inside an area', () => {

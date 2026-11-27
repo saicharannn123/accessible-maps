@@ -69,6 +69,29 @@ describe('search never dead-ends', () => {
     expect(r.places[0]?.name).toBe('Fallback Hall')
   })
 
+  it('puts a far-away place that matches every word above loose nearby matches', async () => {
+    const f = (name: string, c: [number, number]) => ({ geometry: { coordinates: c }, properties: { name } })
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('location_bias_scale')) return json({ features: [f('Yosemite National Park', [-119.55, 37.85])] })
+      if (url.includes('photon')) return json({ features: [f('Nanda Devi National Park', [79.86, 30.41]), f('Valley of Flowers National Park', [79.6, 30.7]), f('Gangotri National Park', [79, 31])] })
+      return json({}, 503)
+    }))
+    const r = await searchAll('Yosemite National Park', undefined, [79.97, 30.38])
+    expect(r.places[0]).toMatchObject({ name: 'Yosemite National Park', far: true })
+    expect(r.places).toHaveLength(4)
+  })
+
+  it('puts a far-away exact name above nearby partial matches', async () => {
+    const f = (name: string, c: [number, number]) => ({ geometry: { coordinates: c }, properties: { name } })
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('location_bias_scale')) return json({ features: [f('Paris', [2.35, 48.86])] })
+      if (url.includes('photon')) return json({ features: [f('Paris Lake', [-119.9, 37.9]), f('Parish Road', [-120, 37.6]), f('Sacred Heart Parish', [-120.8, 37.5])] })
+      return json({}, 503)
+    }))
+    const r = await searchAll('Paris', undefined, [-119.6, 37.75])
+    expect(r.places[0]).toMatchObject({ name: 'Paris', far: true })
+  })
+
   it('says offline only when every source fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
     await expect(searchAll('nothing works here', undefined, TEWKSBURY)).rejects.toBeInstanceOf(SearchOfflineError)
