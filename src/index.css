@@ -489,6 +489,30 @@ section > .search input:focus { background-color: #fff; }
 .nav-btn.icon { width: 48px; padding: 0; font-size: 1.2rem; }
 .nav-btn.end { background: #ef4444; min-width: 72px; }
 .app.navigating .maplibregl-ctrl-top-right { top: 120px; }
+/* Driving speed: bottom-left, above the trip footer, clear of the route ahead (which runs up the
+   middle from your marker), the next-turn banner on top and the map buttons on the right. */
+.speedo { position: absolute; z-index: 5; left: var(--gap); bottom: calc(max(var(--gap), env(safe-area-inset-bottom)) + 68px + var(--gap));
+  display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 20px; background: var(--ink); color: #fff;
+  box-shadow: 0 8px 24px rgba(23,18,58,.35); pointer-events: none; }
+.speedo-now { width: 72px; height: 64px; border-radius: 15px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.08); }
+.speedo-value { font-family: var(--font-display); font-size: 2rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.speedo-unit { margin-top: 3px; font-size: .7rem; font-weight: 700; color: #cfc8f5; text-align: center; line-height: 1.1; }
+.speedo-limit { display: grid; place-items: center; background: #fff; color: #111; font-variant-numeric: tabular-nums; }
+.speedo-limit strong { font-family: var(--font-display); font-weight: 800; line-height: 1; }
+/* US-style rectangle sign with miles, round sign with kilometers. */
+.speedo-limit.us { width: 48px; height: 60px; border-radius: 8px; border: 3px solid #111; align-content: center; gap: 2px; }
+.speedo-limit.us strong { font-size: 1.45rem; }
+.speedo-limit-cap { font-size: .55rem; font-weight: 800; letter-spacing: .04em; }
+.speedo-limit.round { width: 58px; height: 58px; border-radius: 50%; border: 6px solid #e11d2a; }
+.speedo-limit.round strong { font-size: 1.35rem; }
+.speedo-over:empty { display: none; }
+/* Over the limit: red speed panel plus a written "Over limit" tag with an arrow, so it doesn't
+   rely on color alone. */
+.speedo-over { position: absolute; left: 6px; bottom: calc(100% + 6px); white-space: nowrap; padding: 4px 10px; border-radius: 999px;
+  background: #fde047; color: #111; font-size: .8rem; font-weight: 800; box-shadow: 0 4px 12px rgba(23,18,58,.3); }
+.speedo.over .speedo-now { background: #dc2626; }
+.speedo.over .speedo-unit { color: #fff; }
 .app.navigating .locate-btn { display: none; }
 
 /* Your position marker and its picker */

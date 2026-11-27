@@ -23,6 +23,7 @@ import { ROAD_REPORT_IDS, ROAD_REPORT_TYPES, samplePoints } from './lib/roadRepo
 import { alertsAhead, alertText, alongTable, projectOnLine, roadAt } from './lib/roadAlerts'
 import { useMotion, useRoadReports } from './lib/useRoadReports'
 import { ReportMeta, ReportRow, RoadReportForm, VoteButtons } from './components/RoadReports'
+import Speedometer from './components/Speedometer'
 import { useSheetDrag, type SheetSnap } from './lib/useSheetDrag'
 import { MARKER_STYLES, markerHtml, resolveMarker, type MarkerStyle } from './lib/marker'
 import { reverseGeocode } from './lib/geocode'
@@ -853,6 +854,7 @@ export default function App() {
       )}
       {navigating && pick === 'road-report' && <div className="rr-pick-hint" role="status">Tap the map where it is <button type="button" className="link" onClick={() => { setPick(null); setRrSheet(true) }}>Cancel</button></div>}
 
+      {navigating && settings.travelMode === 'car' && <Speedometer fix={loc.fix} status={loc.status} units={units} />}
       {navigating && (
         <div className="nav-footer">
           <div className="nav-stats">
