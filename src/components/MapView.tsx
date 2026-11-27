@@ -23,6 +23,7 @@ import { markerHtml, ROTATES, type DrawnMarker } from '../lib/marker'
 import { bearingDeg } from '../lib/navigation'
 import { registerOwnTiles, withOwnTiles } from '../lib/ownTiles'
 import { attachGlobeSpin } from '../lib/globeSpin'
+import { ROAD_REPORT_TYPES, type RoadReport } from '../lib/roadReports'
 import { OCEAN_LAYER, nearestSouthernOcean, oceanFilter, withWorldLabels } from '../lib/worldLabels'
 
 export interface Layers {
@@ -57,6 +58,11 @@ interface Props {
   /** The related spot picked in the list or on the map, drawn larger with a halo. */
   activeRelatedId?: string | null
   onRelatedClick?: (id: string) => void
+  /** Shared community road reports (police, crash, hazard, closure). */
+  roadReports?: RoadReport[]
+  /** The road report whose card is open, drawn larger. */
+  activeRoadReportId?: string | null
+  onRoadReportClick?: (id: string) => void
   /** A place is selected: fade the other pins (famous places, category results) so its related spots stand out. */
   dimOthers?: boolean
   /** Tapping the map drops a pin, so show a crosshair cursor. */
@@ -172,6 +178,7 @@ function escapeHtml(s: string): string {
 
 export function MapView(props: Props) {
   const { related = [], activeRelatedId = null, onRelatedClick, dimOthers = false, markLabel = null } = props
+  const { roadReports = [], activeRoadReportId = null, onRoadReportClick } = props
   const { access, reports, route, from, to, stops, layers, flyTo, markPin, pickMode, signals, famous, onFamousClick, places, selectedPlaceId, myLocation, myAccuracy, follow, navigating = false, navBearing = 0, marker = 'dot', fitTo, onPlaceClick, onMapClick, onMapContext, onPinDrag, onViewChange, onUserMove, worldview, nameView, mapStyle, units, myPins, myPinFocus = null } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MlMap | null>(null)
@@ -187,7 +194,9 @@ export function MapView(props: Props) {
   const myPinClickRef = useRef(props.onMyPinClick)
   const myPinDragRef = useRef(props.onMyPinDrag)
   const relatedClickRef = useRef(onRelatedClick)
+  const roadClickRef = useRef(onRoadReportClick)
   useEffect(() => {
+    roadClickRef.current = onRoadReportClick
     myPinClickRef.current = props.onMyPinClick
     myPinDragRef.current = props.onMyPinDrag
     relatedClickRef.current = onRelatedClick
@@ -248,7 +257,7 @@ export function MapView(props: Props) {
       }
 
       map.on('load', () => {
-        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'related', 'places', 'me']) {
+        for (const id of ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'related', 'places', 'road-reports', 'me']) {
           map.addSource(id, { type: 'geojson', data: empty })
         }
         map.addLayer({ id: 'lit', type: 'line', source: 'lighting', filter: ['==', ['get', 'lit'], true],
@@ -351,6 +360,21 @@ export function MapView(props: Props) {
           if (id) placeClickRef.current(String(id))
         })
 
+        // Community road reports sit above everything else we draw except your own position.
+        map.addLayer({ id: 'road-reports', type: 'symbol', source: 'road-reports',
+          layout: {
+            'icon-image': ['concat', 'rr-', ['get', 'type']],
+            'icon-size': ['case', ['get', 'active'], 1.15, 0.85],
+            'icon-anchor': 'bottom',
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+            'symbol-sort-key': ['case', ['get', 'active'], 1, 0],
+          } })
+        map.on('click', 'road-reports', (e) => {
+          const id = e.features?.[0]?.properties?.id
+          if (id) roadClickRef.current?.(String(id))
+        })
+
         map.on('click', 'related', (e) => {
           const id = e.features?.[0]?.properties?.id
           if (id) relatedClickRef.current?.(String(id))
@@ -380,7 +404,7 @@ export function MapView(props: Props) {
             `<strong>${escapeHtml(p.label)}</strong><br>${escapeHtml(p.ago)}${p.note ? `<br>"${escapeHtml(p.note)}"` : ''}`,
           ).addTo(map)
         })
-        for (const id of ['restrooms', 'reports', 'places', 'famous', 'related']) {
+        for (const id of ['restrooms', 'reports', 'places', 'famous', 'related', 'road-reports']) {
           map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer' })
           map.on('mouseleave', id, () => { map.getCanvas().style.cursor = pickModeRef.current ? 'crosshair' : '' })
         }
@@ -389,7 +413,7 @@ export function MapView(props: Props) {
       })
 
       map.on('click', (e) => {
-        const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places', 'famous', 'related'] }) : []
+        const hits = map.getLayer('places') ? map.queryRenderedFeatures(e.point, { layers: ['restrooms', 'reports', 'places', 'famous', 'related', 'road-reports'] }) : []
         if (hits.length === 0) clickRef.current([e.lngLat.lng, e.lngLat.lat])
       })
       map.on('contextmenu', (e) => {
@@ -587,6 +611,14 @@ export function MapView(props: Props) {
       })),
     })
   }, [related, activeRelatedId, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    setData('road-reports', {
+      type: 'FeatureCollection',
+      features: roadReports.map((r) => point(r.coords, { id: r.id, type: r.type, active: r.id === activeRoadReportId })),
+    })
+  }, [roadReports, activeRoadReportId, ready])
 
   // While a place is selected, other pins fade so its related spots stand out.
   useEffect(() => {
@@ -828,7 +860,7 @@ function applyNames(map: MlMap, nameView: string | null) {
   }
 }
 
-const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'related', 'places', 'me', WV_SOURCE]
+const APP_SOURCES = ['route', 'restrooms', 'lighting', 'reports', 'obstacles', 'warnings', 'endpoints', 'signals', 'famous', 'related', 'places', 'road-reports', 'me', WV_SOURCE]
 
 /** Keep our sources and layers when the base style changes: borders under labels, the rest on top. */
 function carryOverAppLayers(prev: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification {
@@ -893,7 +925,9 @@ function safeRestyle(look: MapStyleId, style: StyleSpecification): StyleSpecific
 /** A map pin in the category's color with its icon, drawn at 2x for sharp screens. */
 function addCategoryIcon(map: MlMap, id: string) {
   if (map.hasImage(id)) return
+  const road = id.startsWith('rr-') ? ROAD_REPORT_TYPES[id.slice(3) as keyof typeof ROAD_REPORT_TYPES] : null
   const cat = id === 'pin-report' ? { color: '#dc2626', icon: '⚠️' }
+    : road ? { color: road.color, icon: road.icon }
     : id.startsWith('cat-') ? CATEGORIES.find((c) => `cat-${c.id}` === id) : null
   if (!cat) return
   const w = 72, h = 88, r = 32, cx = w / 2, cy = r + 4

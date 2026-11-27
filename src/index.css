@@ -674,3 +674,60 @@ section > .search input:focus { background-color: #fff; }
 .related-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px 60px; }
 .related-actions .chip { min-height: 36px; padding: 6px 12px; font-size: .85rem; text-decoration: none; display: inline-flex; align-items: center; }
 .related-more { align-self: flex-start; }
+
+/* ---- Community road reports ---- */
+.report-kind { margin-bottom: 12px; }
+.rr-form { display: flex; flex-direction: column; gap: 10px; }
+.rr-types { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rr-types button { display: flex; align-items: center; gap: 10px; min-height: 60px; padding: 10px 12px; border-radius: 16px; cursor: pointer;
+  border: 1px solid var(--line); border-left: 5px solid var(--rr, var(--brand)); background: #fff; color: var(--ink); font-weight: 700; text-align: left; }
+.rr-types button:hover:not(:disabled) { background: var(--brand-soft); }
+.rr-types button:disabled { opacity: .45; cursor: not-allowed; }
+.rr-type-icon { font-size: 1.6rem; line-height: 1; }
+.rr-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.rr-row, .rr-card { display: flex; gap: 10px; align-items: flex-start; }
+.rr-row { padding: 10px; border-radius: 14px; border: 1px solid var(--line); background: #fff; }
+.rr-icon { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; font-size: 1.2rem; box-shadow: inset 0 0 0 3px #fff8; }
+.rr-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.rr-title { border: 0; background: none; padding: 0; text-align: left; font-size: .98rem; cursor: pointer; }
+.rr-meta { font-size: .8rem; color: var(--text-2); line-height: 1.35; }
+.rr-badge { display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .02em; padding: 1px 7px; border-radius: 999px;
+  background: #fff4d6; color: #7a4b00; border: 1px solid #f3d48a; margin-right: 2px; }
+.rr-votes { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
+.rr-votes button { min-height: 44px; padding: 0 14px; border-radius: 12px; font-weight: 700; cursor: pointer; border: 1px solid var(--line); background: #fff; color: var(--ink); }
+.rr-votes.compact button { min-height: 40px; padding: 0 12px; font-size: .88rem; }
+.rr-votes .rr-yes { border-color: #86efac; color: #166534; background: #f0fdf4; }
+.rr-votes .rr-no { color: #9f1239; border-color: #fecdd3; background: #fff1f2; }
+.rr-votes button:disabled { opacity: .5; cursor: not-allowed; }
+.rr-note { font-size: .78rem; color: var(--text-2); width: 100%; }
+.check-row { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: .92rem; }
+.check-row input { width: 20px; height: 20px; accent-color: var(--brand); }
+
+/* A tapped report: floating card above the dock (or the nav footer while navigating). */
+.rr-card { position: absolute; z-index: 6; left: var(--gap); width: min(400px, calc(100% - var(--panel-w) - var(--gap) * 3));
+  bottom: calc(var(--gap) + var(--dock-h) + 14px); background: #fff; border-radius: 20px; padding: 12px; box-shadow: 0 14px 40px rgba(23,18,58,.3);
+  animation: rise .2s var(--ease); }
+.rr-card.in-nav { left: var(--gap); right: var(--gap); width: auto; max-width: 560px; margin: 0 auto; bottom: calc(max(var(--gap), env(safe-area-inset-bottom)) + 84px); }
+
+/* Alert during navigation: right under the next-turn banner, never over the footer or speed badge. */
+.rr-alert { position: absolute; z-index: 5; top: calc(max(var(--gap), env(safe-area-inset-top)) + 96px); left: var(--gap); right: var(--gap);
+  max-width: 560px; margin: 0 auto; display: flex; align-items: flex-start; gap: 12px; padding: 10px 10px 10px 12px; border-radius: 18px;
+  background: #fff; color: var(--ink); border-left: 6px solid var(--rr, #ea580c); box-shadow: 0 10px 30px rgba(23,18,58,.3); animation: rise .25s var(--ease); }
+.rr-alert-icon { flex: none; font-size: 1.7rem; line-height: 1.2; }
+.rr-alert-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rr-alert-text strong { font-size: 1rem; line-height: 1.25; }
+.rr-alert-text > span { font-size: .8rem; color: var(--text-2); }
+.rr-alert-text .rr-meta { font-size: inherit; }
+.rr-alert-text .rr-expiry { display: none; }
+.rr-alert-mute { flex: none; width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 1.15rem; cursor: pointer; }
+.rr-pick-hint { position: absolute; z-index: 6; left: 50%; transform: translateX(-50%); top: calc(max(var(--gap), env(safe-area-inset-top)) + 100px);
+  background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; font-weight: 600; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
+.rr-pick-hint .link { color: #c4b5fd; margin-left: 8px; border: 0; background: none; font: inherit; cursor: pointer; }
+.rr-sheet .rr-form .muted { color: var(--text-2); }
+.app.navigating .rr-nav-btn { font-size: 1.15rem; }
+@media (max-width: 720px) {
+  .rr-card:not(.in-nav) { left: var(--gap); right: var(--gap); width: auto; bottom: calc(var(--dock-h) + var(--gap) * 2 + 10px); }
+  .rr-alert { top: calc(max(var(--gap), env(safe-area-inset-top)) + 92px); }
+}
+/* While an alert shows, the map buttons step down below it rather than hide behind it. */
+.app.navigating.rr-alerting .maplibregl-ctrl-top-right { top: 330px; transition: top .2s var(--ease); }
