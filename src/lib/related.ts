@@ -352,7 +352,46 @@ export function parseOverpass(elements: { type: string; id: number; lat?: number
   return out
 }
 
-async function osmHits(wants: Want[], at: LngLat, meters: number, signal?: AbortSignal): Promise<OsmHit[]> {
+/**
+ * Wanted spots in the districts, counties or towns (admin levels 5-8) that contain or touch the
+ * place. QLever has these "contains" links worked out in advance, so this answers in a couple of
+ * seconds, where a plain map-box search over all the world's peaks and parks can take 25 s.
+ * Exported for tests.
+ */
+export function adminAreaQuery(osm: string, wants: Want[], [lng, lat]: LngLat): string {
+  const parts = wants.map((x, i) => `{ ?o ${KEY(x.key)} "${x.value}" .${x.extra ? ` ?o ${KEY(x.extra[0])} "${x.extra[1]}" .` : ''} BIND(${i} AS ?w) }`)
+  return `PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX ogc: <http://www.opengis.net/rdf#>
+SELECT ?o (MIN(?w) AS ?want) (SAMPLE(?nm) AS ?name) (SAMPLE(?en) AS ?nameEn) (SAMPLE(?wkt) AS ?c) (SAMPLE(?wc) AS ?wheelchair) (SAMPLE(?wd) AS ?wikidata) WHERE {
+  { SELECT DISTINCT ?a WHERE {
+    { ?a ogc:sfContains <https://www.openstreetmap.org/${osm}> } UNION { ?a ogc:sfIntersects <https://www.openstreetmap.org/${osm}> }
+    ?a ${KEY('boundary')} "administrative" . ?a ${KEY('admin_level')} ?lvl . FILTER(?lvl >= 5 && ?lvl <= 8)
+  } }
+  ?a ogc:sfContains ?o .
+  ${parts.join(' UNION\n  ')}
+  ?o geo:hasGeometry/geo:asWKT ?g0 .
+  BIND(geof:centroid(?g0) AS ?wkt)
+  OPTIONAL { ?o ${KEY('name')} ?nm }
+  OPTIONAL { ?o ${KEY('name:en')} ?en }
+  OPTIONAL { ?o ${KEY('wheelchair')} ?wc }
+  OPTIONAL { ?o ${KEY('wikidata')} ?wd }
+}
+GROUP BY ?o ORDER BY ASC(geof:distance(?c, "POINT(${lng.toFixed(5)} ${lat.toFixed(5)})"^^geo:wktLiteral)) LIMIT 400`
+}
+
+async function osmHits(wants: Want[], at: LngLat, meters: number, signal?: AbortSignal, osm?: string): Promise<OsmHit[]> {
+  // Fast path: the districts or towns around the place, then keep what's within reach.
+  if (osm) {
+    try {
+      const hits = parseOsmRows(await sparql(QLEVER_OSM_URL, adminAreaQuery(osm, wants, at), signal, 15000))
+        .filter((h) => distanceMeters(at, h.coords) <= meters)
+      if (hits.length) return hits
+    } catch {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      // Fall through to the map-box search below.
+    }
+  }
   const race = new AbortController()
   const stop = () => race.abort()
   signal?.addEventListener('abort', stop)
@@ -632,7 +671,7 @@ export async function loadRelated(place: Place, signal?: AbortSignal): Promise<R
   }).catch((e) => { keepAbort(e); return [] as RelatedSpot[] })
   const [linkRows, hits, parks, inside] = await Promise.all([
     linksP,
-    osmHits(wants, place.coords, radius, signal).catch((e) => { keepAbort(e); osmFailed = true; return [] as OsmHit[] }),
+    osmHits(wants, place.coords, radius, signal, osm).catch((e) => { keepAbort(e); osmFailed = true; return [] as OsmHit[] }),
     containersP,
     insideP,
   ])
