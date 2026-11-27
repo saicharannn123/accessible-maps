@@ -25,6 +25,9 @@ describe('what kind of place', () => {
     expect(groupFromText('glacier')).toBe('water')
     expect(groupFromText('mountain range')).toBe('mountain')
     expect(groupFromText('museum')).toBe('museum')
+    expect(groupFromText('road bridge')).toBe('landmark')
+    expect(groupFromText('Grand Lodge')).toBe('landmark')
+    expect(groupFromText('alpine hut')).toBe('camp')
   })
   it('keeps the specific words of a name', () => {
     expect(coreName('Nanda Devi National Park')).toBe('nanda devi')
@@ -34,7 +37,8 @@ describe('what kind of place', () => {
 
 describe('queries', () => {
   it('asks Wikidata for city landmarks only for cities', () => {
-    expect(linksQuery('Q90', true)).toContain('wdt:P131 wd:Q90')
+    expect(linksQuery('Q90', true)).toContain('?r wdt:P131+ wd:Q90')
+    expect(linksQuery('Q90', true)).toContain('wd:Q570116')
     expect(linksQuery('Q213262')).not.toContain('P131')
     expect(linksQuery('Q213262')).toContain('wd:Q213262 wdt:P3018 ?r')
   })
@@ -69,6 +73,22 @@ describe('turning answers into spots', () => {
     expect(spots.map((s) => s.name)).toEqual(['Nanda Devi National Park', 'Himalayas'])
     expect(spots[0]).toMatchObject({ group: 'park', direct: true, reason: 'National park this place is in', wheelchair: 'unknown' })
     expect(spots[1].group).toBe('mountain')
+  })
+
+  it('keeps events, clubs and districts out of a city', () => {
+    const P90: LngLat = [2.35, 48.86]
+    const row = (q: string, name: string, type: string, rel = 'inCity') => ({ r: v(`http://www.wikidata.org/entity/${q}`), rel: v(rel), name: v(name), c: v('Point(2.33 48.86)'), type: v(type), sl: v('50') })
+    const spots = parseLinks([
+      row('Q1', 'November 2015 Paris attacks', 'coordinated terrorist attack'),
+      row('Q2', 'French Open', 'recurring tennis tournament'),
+      row('Q3', 'Grand Orient of France', 'Grand Lodge'),
+      row('Q4', 'Île-de-France', 'region of France', 'partOf'),
+      row('Q5', '15th arrondissement of Paris', 'electoral unit', 'hasPart'),
+      row('Q6', 'Musée Picasso', 'art museum'),
+      row('Q7', "pont de l'Alma", 'road bridge'),
+    ], P90, 'city')
+    expect(spots.map((s) => s.name)).toEqual(['Musée Picasso', "pont de l'Alma"])
+    expect(spots[1].group).toBe('landmark')
   })
 
   it('reads OSM rows and gives nearby spots a reason', () => {

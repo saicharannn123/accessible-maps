@@ -124,14 +124,14 @@ const KIND_ROOTS: Record<string, AnchorKind> = {
 /** Group for a related Wikidata item, from the English name of its class. */
 export function groupFromText(text: string): RelatedGroup {
   const t = text.toLowerCase()
-  if (/mountain|peak|summit|volcano|massif|ridge|\bhill\b|range|col\b|pass\b/.test(t)) return 'mountain'
+  if (/mountain|peak|summit|volcano|massif|\bridge\b|\bhill\b|\brange\b|\bcol\b|\bpass\b/.test(t)) return 'mountain'
   if (/park|reserve|protected|sanctuary|biosphere|forest|wilderness|heritage site/.test(t)) return 'park'
   if (/trail|path|route|trek/.test(t)) return 'trail'
   if (/glacier|lake|river|waterfall|spring|stream|reservoir|sea\b|bay\b/.test(t)) return 'water'
   if (/museum|gallery/.test(t)) return 'museum'
   if (/station|airport|metro/.test(t)) return 'transit'
   if (/viewpoint|observation/.test(t)) return 'viewpoint'
-  if (/camp|hut|refuge|lodge/.test(t)) return 'camp'
+  if (/\bcamp|\bhut\b|refuge|bivouac|mountain lodge/.test(t)) return 'camp'
   if (/visitor|information|ranger/.test(t)) return 'visitor'
   return 'landmark'
 }
@@ -188,6 +188,14 @@ export const LINKS: Record<string, { rank: number; reason: (kind: string, anchor
   inCity: { rank: 4, reason: (k) => `${cap(k || 'Landmark')} in this city` },
 }
 
+/**
+ * Kinds of things worth visiting in a city: tourist attraction, museum, monument, park, square,
+ * bridge, church, palace, tower, landmark, cemetery, garden, castle, temple, religious building.
+ * Anything else Wikidata places in a city (events, universities, companies) is left out.
+ */
+const CITY_SIGHTS = ['Q570116', 'Q33506', 'Q4989906', 'Q22698', 'Q174782', 'Q12280', 'Q16970', 'Q16560', 'Q12518', 'Q2319498',
+  'Q39614', 'Q1107656', 'Q23413', 'Q44539', 'Q24398318'].map((q) => `wd:${q}`).join(' ')
+
 /** Everything linked to item `q` in Wikidata, with a name and coordinates. Exported for tests. */
 export function linksQuery(q: string, city = false): string {
   const Q = `wd:${q}`
@@ -201,7 +209,8 @@ export function linksQuery(q: string, city = false): string {
   { BIND("inRange" AS ?rel) ?r wdt:P4552 ${Q} } UNION
   { BIND("feature" AS ?rel) ${Q} wdt:P706 ?r } UNION
   { BIND("onFeature" AS ?rel) ?r wdt:P706 ${Q} }${city ? ` UNION
-  { BIND("inCity" AS ?rel) ?r wdt:P131 ${Q} . ?r wikibase:sitelinks ?s1 . FILTER(?s1 >= 6) }` : ''}
+  { BIND("inCity" AS ?rel) ?r wdt:P131+ ${Q} . ?r wikibase:sitelinks ?s1 . FILTER(?s1 >= 10)
+    ?r wdt:P31/wdt:P279* ?root . VALUES ?root { ${CITY_SIGHTS} } FILTER NOT EXISTS { ?r wdt:P576 ?gone } }` : ''}
   FILTER(?r != ${Q})
   ?r wdt:P625 ?c0 .
   ?r rdfs:label ?nm . FILTER(LANG(?nm) = "en")
@@ -223,6 +232,8 @@ export function typesQuery(ids: string[]): string {
 
 // Classes that are never a place you'd visit (administrative areas, people's settlements around a peak…).
 const SKIP_TYPES = /^(human settlement|village|census town|tehsil|district|administrative|community development block|gram panchayat|human|city|town|county|state|country)/i
+/** Things Wikidata places in a city that aren't spots to visit: events, groups, voting areas. */
+const NOT_A_SPOT = /attack|bombing|shooting|massacre|battle|\bwar\b|siege|riot|protest|uprising|election|electoral|tournament|championship|competition|festival|\bevent\b|edition|season|marathon|award|organi[sz]ation|company|business|enterprise|lodge|\bclub\b|team|association|political party|diocese|parish|region of|province|department of|arrondissement|municipality|commune/i
 
 /** Wikidata rows to direct spots, keeping the strongest link for each item. Exported for tests. */
 export function parseLinks(rows: Row[], from: LngLat, anchor: AnchorKind): RelatedSpot[] {
@@ -235,6 +246,8 @@ export function parseLinks(rows: Row[], from: LngLat, anchor: AnchorKind): Relat
     if (!coords || !id || !r.name || !link) continue
     const type = r.type?.value ?? ''
     if (rel === 'inCity' && SKIP_TYPES.test(type)) continue
+    // Around a city, "part of" and "in this city" also bring events, clubs and voting districts.
+    if (anchor === 'city' && (NOT_A_SPOT.test(type) || SKIP_TYPES.test(type))) continue
     const distance = distanceMeters(from, coords)
     // Peaks of a whole range only help when they're actually in the area.
     if (rel === 'inRange' && distance > 60_000) continue
