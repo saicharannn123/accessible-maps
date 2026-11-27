@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { MapView, type Layers } from './components/MapView'
 import { SearchBox } from './components/SearchBox'
 import { MyMapsPanel } from './components/MyMaps'
 import { SaveToMap } from './components/SaveToMap'
 import { getMyMaps, itemTitle, savePlace, updateItem, updateMyMaps, useMyMaps, type MapItem } from './lib/myMaps'
+import { RelatedPlaces, type SaveablePlace } from './components/RelatedPlaces'
+import { anchorKey, WHEELCHAIR_LINE, kindFromOsmTag, kindFromText, loadRelated, spotPlace, type RelatedResult, type RelatedSpot } from './lib/related'
 import { APP_NAME, MAP_STYLES, ORS_KEY, PILOT_CITY, REPORT_LIFETIME_DAYS, type MapStyleId } from './config'
 import { browserNameView, browserWorldview, WORLDVIEWS, type WorldviewCode, type WorldviewSetting } from './lib/worldview'
 import { bboxOf, browserUnits, distanceMeters, formatDistance, formatDuration, radiusChoices, setDistanceUnits, snapRadius } from './lib/geo'
@@ -59,6 +61,15 @@ interface Nearby {
 function pinnedPlace(c: LngLat, name = 'Dropped pin'): Place {
   return { name, detail: `${c[1].toFixed(5)}, ${c[0].toFixed(5)}`, coords: c }
 }
+
+/** How close to zoom when a place is selected: a whole mountain or park, a city, or a street corner. */
+function zoomFor(p: Place): number {
+  const kind = kindFromOsmTag(p.osmTag) ?? kindFromText(`${p.detail} ${p.icon === '⛰️' ? 'mountain' : ''}`)
+  return kind === 'mountain' ? 11 : kind === 'park' ? 11 : kind === 'city' ? 12 : 15
+}
+
+/** The "Save to map" button from My Maps, on the selected place card and Related places rows. */
+const saveSlot = (p: SaveablePlace): ReactNode => <SaveToMap place={p} />
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('nearby')
@@ -116,9 +127,9 @@ export default function App() {
   const [mapMenu, setMapMenu] = useState<{ at: LngLat; x: number; y: number; name: string | null } | null>(null)
   const [routeState, setRouteState] = useState<{ key: string; route: RouteResult | null; error: string | null }>({ key: '', route: null, error: null })
   const [routing, setRouting] = useState(false)
-  const [flyTo, setFlyTo] = useState<{ at: LngLat; keepZoom?: boolean } | null>(null)
+  const [flyTo, setFlyTo] = useState<{ at: LngLat; keepZoom?: boolean; zoom?: number } | null>(null)
   // A fresh object every time, so picking the same place twice still moves the map.
-  const fly = useCallback((at: LngLat, keepZoom = false) => setFlyTo({ at: [...at] as LngLat, keepZoom }), [])
+  const fly = useCallback((at: LngLat, keepZoom = false, zoom?: number) => setFlyTo({ at: [...at] as LngLat, keepZoom, zoom }), [])
   // The place you picked from the search box on the Near me tab, shown as a red pin.
   const [searchPin, setSearchPin] = useState<Place | null>(null)
   // My Maps: the open map (its pins show on the map) and the highlighted item.
@@ -196,6 +207,8 @@ export default function App() {
   }, [])
 
   const searchCenter = myLocation ?? mapCenter
+  // While a place is selected, Explore's categories search around it instead of around you.
+  const aroundCenter = searchPin?.coords ?? searchCenter
   const pickCategory = (id: string) => {
     if (nearby.category === id) { // tapping the active category again clears it
       nearbyCtrl.current?.abort()
@@ -203,8 +216,77 @@ export default function App() {
       setSelectedId(null)
       return
     }
-    searchNearby(id, nearby.radius, searchCenter)
+    searchNearby(id, nearby.radius, aroundCenter)
     remember({ kind: 'category', category: id })
+  }
+
+  // --- The selected place and what's related to it -------------------------------------------
+  const nearbyNow = useRef(nearby)
+  useEffect(() => { nearbyNow.current = nearby })
+  /** Select a place: highlight and center its pin, show its card and related spots, and make it the center for categories. */
+  const selectAnchor = useCallback((p: Place, addToRecent = true) => {
+    if (addToRecent) remember({ kind: 'place', place: { name: p.name, detail: p.detail, coords: p.coords } })
+    setSearchPin(p)
+    setSelectedId(null)
+    setTab('nearby')
+    setSheetOpen(true)
+    setFollow(false)
+    fly(p.coords, false, zoomFor(p))
+    panelScroll.current?.scrollTo({ top: 0 })
+    const n = nearbyNow.current
+    if (n.category) searchNearby(n.category, n.radius, p.coords)
+  }, [remember, setSheetOpen, fly, searchNearby])
+
+  // The answer for one selected place (by key); while the key doesn't match the selected place, it's loading.
+  const [relatedAnswer, setRelatedAnswer] = useState<{ key: string; status: 'done' | 'error'; result: RelatedResult | null }>({ key: '', status: 'done', result: null })
+  const [activeSpotId, setActiveSpot] = useState<string | null>(null)
+  // Bumped when a pin is tapped on the map, so the list scrolls to its row.
+  const [spotScroll, setSpotScroll] = useState(0)
+  const [relatedTry, setRelatedTry] = useState(0)
+  useEffect(() => {
+    if (!searchPin) return
+    const key = anchorKey(searchPin)
+    const ctrl = new AbortController()
+    const anchor = searchPin
+    loadRelated(anchor, ctrl.signal)
+      .then((result) => {
+        setRelatedAnswer({ key, status: 'done', result })
+        // Frame the place with its closest related spots around it, the place itself in the middle
+        // (each spot is mirrored across it), clear of the panel.
+        const near = result.spots.filter((x) => x.distance < Math.max(result.radius * 1.2, 5000)).sort((a, b) => a.distance - b.distance).slice(0, 8)
+        if (near.length) {
+          const c = anchor.coords
+          setFitTo({ points: [c, ...near.flatMap((x) => [x.coords, [2 * c[0] - x.coords[0], 2 * c[1] - x.coords[1]] as LngLat])], key: Date.now() })
+        }
+      })
+      .catch((e) => { if (e?.name !== 'AbortError') setRelatedAnswer({ key, status: 'error', result: null }) })
+    return () => ctrl.abort()
+  }, [searchPin, relatedTry])
+  const related: { status: 'loading' | 'done' | 'error'; result: RelatedResult | null } =
+    !searchPin ? { status: 'done', result: null }
+      : relatedAnswer.key === anchorKey(searchPin) ? relatedAnswer : { status: 'loading', result: null }
+  const relatedSpots = useMemo(() => related.result?.spots ?? [], [related.result])
+  // A spot stays highlighted only while it belongs to the selected place's list.
+  const activeSpot = activeSpotId && relatedSpots.some((x) => x.id === activeSpotId) ? activeSpotId : null
+
+  const activateSpot = useCallback((s: RelatedSpot) => {
+    setActiveSpot((cur) => (cur === s.id ? null : s.id))
+    setFollow(false)
+    fly(s.coords, true)
+  }, [fly])
+  const onRelatedPin = useCallback((id: string) => {
+    setActiveSpot(id)
+    setTab('nearby')
+    setSheetOpen(true)
+    setSpotScroll((k) => k + 1)
+  }, [setSheetOpen])
+  /** Back to your live location: drop the selected place and search categories around you again. */
+  const nearMe = () => {
+    setSearchPin(null)
+    setFollow(true)
+    if (myLocation) fly(myLocation, false, 15)
+    if (loc.status !== 'live') loc.start()
+    if (nearby.category) searchNearby(nearby.category, nearby.radius, myLocation ?? mapCenter)
   }
 
   const statusById = useMemo(
@@ -564,9 +646,9 @@ export default function App() {
   const openHistory = (h: HistoryItem) => {
     remember({ ...h })
     if (h.kind === 'place') {
-      setSelectedId(null); setSearchPin(h.place); setFollow(false); fly(h.place.coords)
+      selectAnchor(h.place, false)
     } else if (h.kind === 'category') {
-      if (nearby.category !== h.category) searchNearby(h.category, nearby.radius, searchCenter)
+      if (nearby.category !== h.category) searchNearby(h.category, nearby.radius, aroundCenter)
     } else {
       setFrom(h.from); setTo(h.to); setStops([]); setTravelMode(h.mode)
       if (!h.from && loc.status !== 'live') loc.start()
@@ -599,16 +681,13 @@ export default function App() {
         layers={layers}
         flyTo={flyTo}
         signals={signals}
-        famous={famous}
-        onFamousClick={(f) => {
-          const p: Place = { name: f.name, detail: f.kind, coords: f.coords, icon: f.icon, photo: f.photo, about: f.about, wiki: f.wiki }
-          remember({ kind: 'place', place: { name: p.name, detail: p.detail, coords: p.coords } })
-          setSearchPin(p)
-          setSelectedId(null)
-          setTab('nearby')
-          setSheetOpen(true)
-          panelScroll.current?.scrollTo({ top: 0 })
-        }}
+        famous={searchPin && tab === 'nearby' ? famous.filter((f) => !relatedSpots.some((r) => r.wikidata === f.id) && f.id !== searchPin.wikidata) : famous}
+        related={tab === 'nearby' ? relatedSpots : []}
+        activeRelatedId={activeSpot}
+        onRelatedClick={onRelatedPin}
+        dimOthers={tab === 'nearby' && searchPin != null && !selected}
+        markLabel={tab === 'nearby' && !selected && searchPin ? searchPin.name : null}
+        onFamousClick={(f) => selectAnchor({ name: f.name, detail: f.kind, coords: f.coords, icon: f.icon, photo: f.photo, about: f.about, wiki: f.wiki, wikidata: f.id })}
         markPin={tab === 'nearby' && !selected ? searchPin?.coords ?? null : tab === 'report' ? draft.coords : null}
         pickMode={pick != null || tab === 'route' || tab === 'report'}
         places={tab === 'nearby' ? shownPlaces : selected ? [selected] : []}
@@ -747,7 +826,7 @@ export default function App() {
         <div className="panel-scroll" ref={panelScroll}>
         <header className="panel-head">
           <span className="panel-kicker">{TAB_INFO[tab].icon} {TAB_INFO[tab].label}</span>
-          <h1>{TAB_INFO[tab].title}</h1>
+          <h1>{tab === 'nearby' && searchPin ? `Around ${searchPin.name}` : TAB_INFO[tab].title}</h1>
         </header>
 
         <LocationNotice status={loc.status} onRetry={loc.start} />
@@ -759,34 +838,45 @@ export default function App() {
               near={searchCenter}
               onSelect={(p) => {
                 if (!p) return
-                remember({ kind: 'place', place: p })
-                setSearchPin(p)
-                setSelectedId(null)
-                fly(p.coords)
-                // A specific address becomes the new "near" point for the categories.
-                if (nearby.category) searchNearby(nearby.category, nearby.radius, p.coords)
+                // The place becomes the selected place: its pin, its related spots, and the center for categories.
+                selectAnchor(p)
               }} />
             {searchPin && (
-              <div className="place-card pin-card">
-                <button type="button" className="pin-close" aria-label="Remove pin" onClick={() => setSearchPin(null)}>✕</button>
+              <div className="place-card pin-card selected-card">
+                <button type="button" className="pin-close" aria-label="Clear the selected place" onClick={() => setSearchPin(null)}>✕</button>
                 {searchPin.photo && <img className="pin-photo" src={searchPin.photo} alt="" loading="lazy"
                   onError={(e) => { e.currentTarget.style.display = 'none' }} />}
+                <span className="selected-kicker">Selected place</span>
                 <h2>{searchPin.icon ?? '📍'} {searchPin.name}</h2>
                 {searchPin.detail && <p className="muted">{searchPin.detail}</p>}
                 {searchPin.about && <p className="pin-about">{searchPin.about[0].toUpperCase() + searchPin.about.slice(1)}</p>}
                 <p className="muted small">{searchPin.coords[1].toFixed(4)}, {searchPin.coords[0].toFixed(4)}
                   {searchPin.wiki && <> · <a href={searchPin.wiki} target="_blank" rel="noreferrer">Read more on Wikipedia</a></>}</p>
+                {(() => {
+                  const wc = related.status === 'done' && related.result ? related.result.wheelchair : 'unknown'
+                  return <p className={`wc wc-${wc}`}>{wc === 'unknown' ? '♿ ' : ''}{WHEELCHAIR_LINE[wc]}</p>
+                })()}
                 <div className="actions">
                   <button type="button" className="primary" onClick={() => {
                     setTo(searchPin); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route')
                   }}>Directions</button>
-                  <button type="button" className="secondary" onClick={() => fly(searchPin.coords)}>Show on map</button>
-                  <SaveToMap place={{ name: searchPin.name, coords: searchPin.coords, kind: searchPin.detail, icon: searchPin.icon, source: 'search' }} />
+                  <button type="button" className="secondary" onClick={() => { setFollow(false); fly(searchPin.coords, false, zoomFor(searchPin)) }}>Show on map</button>
+                  {saveSlot?.({ name: searchPin.name, coords: searchPin.coords, kind: searchPin.detail, icon: searchPin.icon, source: 'search', osmId: searchPin.osm ?? (searchPin.wikidata ? `wd:${searchPin.wikidata}` : undefined) })}
                 </div>
               </div>
             )}
+            {searchPin && (
+              <RelatedPlaces anchorName={searchPin.name} status={related.status} result={related.result}
+                activeId={activeSpot} scrollKey={spotScroll}
+                onActivate={activateSpot}
+                onExplore={(sp) => selectAnchor(spotPlace(sp))}
+                onDirections={(sp) => { setTo(spotPlace(sp)); setFrom(null); if (loc.status !== 'live') loc.start(); setTab('route') }}
+                onRetry={() => { setRelatedAnswer({ key: '', status: 'done', result: null }); setRelatedTry((n) => n + 1) }}
+                saveSlot={saveSlot} />
+            )}
             <p className="muted small loc-line">
-              {loc.status === 'live' ? '📍 Showing places near your live location'
+              {searchPin ? <>📍 Categories search around <strong>{searchPin.name}</strong>. <button type="button" className="chip loc near-me" onClick={nearMe}><span aria-hidden="true">◎</span> Near me</button></>
+                : loc.status === 'live' ? '📍 Showing places near your live location'
                 : loc.status === 'asking' || loc.status === 'checking' ? 'Finding your location…'
                 : <>Location is off, so places near the map center are shown. <button type="button" className="link" onClick={loc.start}>Turn on location</button></>}
             </p>
@@ -807,7 +897,7 @@ export default function App() {
               <div className="filters">
                 <label>
                   <span className="sr-only">Distance</span>
-                  <select value={snapRadius(nearby.radius)} onChange={(e) => searchNearby(nearby.category!, Number(e.target.value), nearby.center ?? searchCenter)}>
+                  <select value={snapRadius(nearby.radius)} onChange={(e) => searchNearby(nearby.category!, Number(e.target.value), nearby.center ?? aroundCenter)}>
                     {radii.map((r) => <option key={r.m} value={r.m}>Within {r.label}</option>)}
                   </select>
                 </label>
@@ -843,6 +933,9 @@ export default function App() {
                   {selected.website && <a className="secondary" href={selected.website} target="_blank" rel="noreferrer">Website</a>}
                   <SaveToMap place={{ name: selected.name, coords: selected.coords, kind: selected.kind, icon: CATEGORY_BY_ID[selected.category]?.icon, source: 'search', osmId: selected.id }} />
                 </div>
+                <button type="button" className="link small" onClick={() => selectAnchor({ name: selected.name, detail: selected.kind, coords: selected.coords, icon: CATEGORY_BY_ID[selected.category]?.icon, osm: selected.id })}>
+                  See related places around {selected.name}
+                </button>
                 <a className="small" href={`https://www.openstreetmap.org/${selected.id}`} target="_blank" rel="noreferrer">Fix or add details on OpenStreetMap</a>
               </div>
             )}
@@ -850,14 +943,14 @@ export default function App() {
             {!selected && nearby.status === 'idle' && <p className="muted">Pick a category to see what's nearby.</p>}
             {!selected && nearby.status === 'loading' && <p className="muted" role="status">Looking for {CATEGORY_BY_ID[nearby.category!].label.toLowerCase()} nearby…</p>}
             {!selected && nearby.status === 'error' && (
-              <p className="error" role="alert">Couldn't load places right now. <button type="button" className="link" onClick={() => searchNearby(nearby.category!, nearby.radius, nearby.center ?? searchCenter)}>Try again</button></p>
+              <p className="error" role="alert">Couldn't load places right now. <button type="button" className="link" onClick={() => searchNearby(nearby.category!, nearby.radius, nearby.center ?? aroundCenter)}>Try again</button></p>
             )}
             {!selected && nearby.status === 'done' && (
               shownPlaces.length === 0 ? (
                 <p className="muted">
                   {openOnly && nearby.places.length > 0 ? 'Nothing open right now that lists its hours. ' : `Nothing found within ${formatDistance(nearby.radius)}. `}
                   {nearby.radius < radii[radii.length - 1].m && (
-                    <button type="button" className="link" onClick={() => searchNearby(nearby.category!, radii.find((r) => r.m > nearby.radius)?.m ?? nearby.radius, nearby.center ?? searchCenter)}>Search wider</button>
+                    <button type="button" className="link" onClick={() => searchNearby(nearby.category!, radii.find((r) => r.m > nearby.radius)?.m ?? nearby.radius, nearby.center ?? aroundCenter)}>Search wider</button>
                   )}
                 </p>
               ) : (

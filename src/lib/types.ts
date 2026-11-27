@@ -31,6 +31,12 @@ export interface Place {
   photo?: string
   about?: string
   wiki?: string
+  /** OpenStreetMap object, e.g. "node/123" or "relation/456". */
+  osm?: string
+  /** Main OSM tag, e.g. "natural=peak", used to tell what kind of place this is. */
+  osmTag?: string
+  /** Wikidata item, e.g. "Q123", for places that have one. */
+  wikidata?: string
 }
 
 export type ReportType =
